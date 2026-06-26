@@ -1,0 +1,70 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/goal_guard.py\" hook SessionStart; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { python \"$env:CLAUDE_PLUGIN_ROOT\\core\\goal_guard.py\" hook SessionStart }",
+            "timeout": 5,
+            "statusMessage": "Loading goal matrix guard..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/goal_guard.py\" hook UserPromptSubmit; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { python \"$env:CLAUDE_PLUGIN_ROOT\\core\\goal_guard.py\" hook UserPromptSubmit }",
+            "timeout": 5,
+            "statusMessage": "Checking goal matrix guard..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/goal_guard.py\" hook PreToolUse; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { python \"$env:CLAUDE_PLUGIN_ROOT\\core\\goal_guard.py\" hook PreToolUse }",
+            "timeout": 5,
+            "statusMessage": "Checking active goal boundary..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/goal_guard.py\" hook PostToolUse; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { python \"$env:CLAUDE_PLUGIN_ROOT\\core\\goal_guard.py\" hook PostToolUse }",
+            "timeout": 5,
+            "statusMessage": "Recording loop step..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/core/goal_guard.py\" hook Stop; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { python \"$env:CLAUDE_PLUGIN_ROOT\\core\\goal_guard.py\" hook Stop }",
+            "timeout": 5,
+            "statusMessage": "Checking loop completion..."
+          }
+        ]
+      }
+    ]
+  }
+}

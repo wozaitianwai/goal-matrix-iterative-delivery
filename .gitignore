@@ -1,0 +1,13 @@
+# ReCode local database
+.recode
+
+# Local Codex/plugin development state
+.agents/
+.codex/
+.goal-matrix/
+plugins/
+docs/superpowers/
+
+# Python cache
+__pycache__/
+*.pyc

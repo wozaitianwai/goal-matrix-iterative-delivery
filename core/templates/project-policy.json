@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "initializationType": "new-project",
+  "immutablePaths": [],
+  "approvalRequiredPaths": [
+    ".env",
+    ".env.*",
+    "infra/**",
+    "schema/**",
+    "migrations/**",
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml"
+  ],
+  "protectedCommands": [
+    "rm",
+    "git reset --hard",
+    "drop database"
+  ],
+  "truthSources": [
+    "tests",
+    "build",
+    "logs",
+    "api",
+    "database",
+    "browser",
+    "config"
+  ],
+  "requiredDocs": [
+    "project-context.md",
+    "checks.md",
+    "goals/goal-matrix.md",
+    "goals/active-goal.md"
+  ],
+  "completionRequires": [
+    "verification",
+    "truthSource",
+    "checkpoint"
+  ]
+}

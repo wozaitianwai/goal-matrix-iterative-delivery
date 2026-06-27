@@ -1,26 +1,24 @@
 {
   "name": "goal-matrix-iterative-delivery",
   "version": "0.1.0+codex.20260626122349",
-  "description": "Fuses Superpowers, Ponytail, Codex hooks, and user operating habits into a goal-matrix engineering workflow.",
+  "description": "hook-backed goal-matrix workflow guard for Codex.",
   "author": {
     "name": "wozaitianwai"
   },
   "license": "MIT",
   "keywords": [
     "goal-matrix",
-    "superpowers",
-    "ponytail",
     "iterative-delivery",
     "hooks",
     "truth-source",
     "personal-workflow"
   ],
   "skills": "./adapters/codex/skills/",
-  "hooks": "./adapters/codex/hooks/claude-codex-hooks.json",
+  "hooks": "./adapters/codex/hooks/codex-lifecycle-hooks.json",
   "interface": {
     "displayName": "Goal Matrix Delivery",
     "shortDescription": "Personal engineering workflow guard",
-    "longDescription": "Use a visible goal matrix, one active child goal, user truth-source habits, real verification, and Ponytail-style scope control for project work.",
+    "longDescription": "Use a visible goal matrix, one active child goal, real truth-source verification, and tight scope control in Codex.",
     "developerName": "wozaitianwai",
     "category": "Developer Tools",
     "capabilities": [

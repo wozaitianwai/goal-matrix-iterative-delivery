@@ -1,0 +1,27 @@
+patterns:
+  - id: package-triage
+    name: Package Triage
+    goal: Keep the Codex plugin package, hook wiring, installed skills, and loop evidence aligned.
+    cadence: manual-or-daily
+    risk: medium
+    tools:
+      - codex
+      - github-actions
+      - git
+    skills:
+      - goal-matrix-iterative-delivery
+      - loop-verifier
+    state: STATE.md
+    phases:
+      - inspect
+      - verify
+      - fix-small
+      - checkpoint
+      - escalate
+    human_gates:
+      - global-config
+      - hook-trust
+      - remote-push
+      - release
+    week_one_mode: L2
+    token_cost: low

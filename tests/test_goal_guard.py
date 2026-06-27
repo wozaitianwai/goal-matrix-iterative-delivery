@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "core" / "goal_guard.py"
 PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
+GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -86,6 +87,8 @@ def test_core_protocol_defines_loop_engineering_contract():
     for phrase in (
         "Loop engineering",
         "project initialization status -> active goal -> failing check",
+        "self-evolution run",
+        "budget, blocker, or no pending goal",
         "checkpoint commit",
         "design_gate",
         "review_gate",
@@ -162,7 +165,9 @@ def test_manifest_wires_skill_and_hooks():
 
     assert manifest["name"] == "goal-matrix-iterative-delivery"
     assert manifest["skills"] == "./adapters/codex/skills/"
-    assert manifest["hooks"] == "./adapters/codex/hooks/claude-codex-hooks.json"
+    assert manifest["hooks"] == "./adapters/codex/hooks/codex-lifecycle-hooks.json"
+    assert "hook-backed" in manifest["description"]
+    assert "truth-source verification" in manifest["interface"]["longDescription"]
     assert (ROOT / manifest["hooks"]).is_file()
     assert (ROOT / manifest["skills"]).is_dir()
 
@@ -182,55 +187,60 @@ def test_git_tracked_files_exclude_local_state_and_overlay_dirs():
 
 
 def test_public_readmes_are_bilingual_and_hide_development_process_paths():
-    chinese = read_text("README.md")
-    english = read_text("README.en.md")
+    english = read_text("README.md")
+    chinese = read_text("README.zh.md")
 
-    assert "中文 | [English]" in chinese
-    assert "English | [中文]" in english
+    assert "中文 | [English](README.md)" in chinese
+    assert "English | [中文](README.zh.md)" in english
     assert "Goal Matrix Iterative Delivery" in chinese
     assert "Goal Matrix Iterative Delivery" in english
     assert "create_goal" in chinese
     assert "create_goal" in english
     assert "validate_plugin_package.py" in chinese
     assert "validate_plugin_package.py" in english
-    assert "项目安装" in chinese
-    assert "全局 Codex" in chinese
-    assert "Project Install" in english
-    assert "Global Codex" in english
-    assert "python3 scripts/install_adapter.py cursor --target /path/to/project" in chinese
-    assert "python3 scripts/install_adapter.py codex --scope global" in english
+    assert "初始化项目" in chinese
+    assert "Initialize A Project" in english
+    assert "codex plugin marketplace add ." in chinese
+    assert "codex plugin marketplace add ." in english
+    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-local" in chinese
+    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-local" in english
+    assert "python3 scripts/install_adapter.py codex --target /path/to/project" in chinese
     assert "python3 scripts/loop_verify.py" in chinese
     assert "python3 scripts/loop_verify.py" in english
-    for phrase in ("Cursor", "Claude Code", "Generic"):
-        assert phrase in chinese
-        assert phrase in english
+    assert "goal_guard.py start --root ." in chinese
+    assert "goal_guard.py start --root ." in english
+    assert "goal_guard.py checkpoint --root ." in chinese
+    assert "goal_guard.py checkpoint --root ." in english
+    assert "Codex lifecycle adapter" in chinese
+    assert "lifecycle adapter" in english
+    assert "不是后台任务系统" in chinese
+    assert "not a background job system" in english
+    for phrase in ("cursor --target", "instruction-host --target", "generic --target"):
+        assert phrase not in chinese
+        assert phrase not in english
     for text in (chinese, english):
         assert "tests/" not in text
         assert "docs/" not in text
         assert ".codex-plugin" not in text
-        assert "core/" not in text
 
 
 def test_adapter_directories_exist():
     for path in (
-        "adapters/codex/hooks/claude-codex-hooks.json",
+        "adapters/codex/hooks/codex-lifecycle-hooks.json",
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
-        "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-        "adapters/claude-code/CLAUDE.md",
-        "adapters/claude-code/README.md",
-        "adapters/generic/AGENTS.md",
         "assets/icon.png",
         "scripts/install_adapter.py",
         "scripts/validate_plugin_package.py",
     ):
         assert (ROOT / path).is_file(), path
 
+    for path in ("adapters/cursor", "adapters/instruction-host", "adapters/generic"):
+        assert not (ROOT / path).exists(), path
+
 
 def test_instruction_adapters_include_core_invariants():
     for path in (
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
-        "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-        "adapters/generic/AGENTS.md",
     ):
         text = read_text(path)
         for phrase in PROTOCOL_INVARIANTS:
@@ -240,9 +250,6 @@ def test_instruction_adapters_include_core_invariants():
 def test_instruction_adapters_include_skill_plugin_routing():
     for path in (
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
-        "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-        "adapters/claude-code/CLAUDE.md",
-        "adapters/generic/AGENTS.md",
     ):
         text = read_text(path)
         assert "Skill and plugin routing" in text, path
@@ -252,9 +259,6 @@ def test_instruction_adapters_include_skill_plugin_routing():
 def test_instruction_adapters_include_full_loop_boundaries():
     for path in (
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
-        "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-        "adapters/claude-code/CLAUDE.md",
-        "adapters/generic/AGENTS.md",
     ):
         text = read_text(path)
         for phrase in (
@@ -262,18 +266,15 @@ def test_instruction_adapters_include_full_loop_boundaries():
             "design_gate",
             "review_gate",
             "Next loop",
+            "self-evolution run",
+            "budget, blocker, or no pending goal",
             "visible Codex goal",
         ):
             assert phrase in text, f"{path} missing {phrase}"
 
 
 def test_adapter_readmes_include_install_and_validation_commands():
-    for path in (
-        "adapters/codex/README.md",
-        "adapters/cursor/README.md",
-        "adapters/claude-code/README.md",
-        "adapters/generic/README.md",
-    ):
+    for path in ("adapters/codex/README.md",):
         text = read_text(path)
         assert "install_adapter.py" in text, path
         assert "validate_plugin_package.py" in text, path
@@ -281,7 +282,7 @@ def test_adapter_readmes_include_install_and_validation_commands():
         assert "goal_guard.py audit" in text, path
 
 
-def test_install_adapter_project_cursor_copies_rule_and_initializes_goal_matrix():
+def test_install_adapter_rejects_non_hook_instruction_adapters():
     with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run(
             [
@@ -295,11 +296,9 @@ def test_install_adapter_project_cursor_copies_rule_and_initializes_goal_matrix(
             capture_output=True,
             cwd=ROOT,
         )
-        target = Path(tmp)
 
-        assert result.returncode == 0, result.stderr
-        assert (target / ".cursor" / "rules" / "goal-matrix-iterative-delivery.mdc").is_file()
-        assert (target / ".goal-matrix" / "project-policy.json").is_file()
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr
 
 
 def test_install_adapter_global_codex_syncs_installed_skill():
@@ -339,7 +338,7 @@ def test_package_validator_checks_current_repo():
     assert result.returncode == 0, result.stderr
     package = json.loads(result.stdout)
     assert package["ok"] is True
-    assert package["adapters"] == ["codex", "cursor", "claude-code", "generic"]
+    assert package["adapters"] == ["codex"]
     assert package["manifest"]["name"] == "goal-matrix-iterative-delivery"
 
 
@@ -354,6 +353,29 @@ def test_l1_loop_ready_spine_files_are_committable():
         assert path in tracked.stdout.splitlines(), path
 
 
+def test_patterns_registry_lists_machine_readable_local_loop_pattern():
+    registry = ROOT / "patterns" / "registry.yaml"
+    assert registry.is_file(), "patterns/registry.yaml"
+    text = registry.read_text(encoding="utf-8")
+
+    for phrase in (
+        "patterns:",
+        "id: package-triage",
+        "name:",
+        "goal:",
+        "cadence:",
+        "risk:",
+        "tools:",
+        "skills:",
+        "state:",
+        "phases:",
+        "human_gates:",
+        "week_one_mode:",
+        "token_cost:",
+    ):
+        assert phrase in text
+
+
 def test_loop_audit_scores_current_repo_l2_assisted_with_verifier():
     result = subprocess.run(
         [sys.executable, str(LOOP_AUDIT), "--root", str(ROOT), "--json"],
@@ -364,7 +386,7 @@ def test_loop_audit_scores_current_repo_l2_assisted_with_verifier():
 
     assert result.returncode == 0, result.stderr
     audit = json.loads(result.stdout)
-    assert audit["level"] == "L2"
+    assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidence"] else "L2")
     assert audit["score"] >= 58
     assert audit["signals"]["stateFile"] is True
     assert audit["signals"]["loopConfig"] is True
@@ -389,7 +411,9 @@ def test_loop_engineering_completion_matrix_is_audited():
     assert audit["levels"]["L1"] == "report-only"
     assert audit["levels"]["L2"] == "assisted-with-verifier"
     assert audit["levels"]["L3"] == "remote-ci-activity"
-    if audit["signals"]["githubRemote"]:
+    if audit["signals"]["remoteRunEvidence"]:
+        assert audit["blocked"] == []
+    elif audit["signals"]["githubRemote"]:
         assert any("Remote workflow run evidence" in item for item in audit["blocked"])
     else:
         assert any("GitHub remote" in item for item in audit["blocked"])
@@ -412,7 +436,7 @@ def test_loop_verifier_skill_is_packaged_and_audited():
     assert result.returncode == 0, result.stderr
     audit = json.loads(result.stdout)
     assert audit["signals"]["verifier"] is True
-    assert audit["level"] == "L2"
+    assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidence"] else "L2")
 
 
 def test_loop_engineering_gap_register_tracks_unfinished_work():
@@ -421,12 +445,13 @@ def test_loop_engineering_gap_register_tracks_unfinished_work():
 
     for phrase in (
         "Engineering Gap Register",
-        "remote-ci",
+        "Resolved: keep run URL/status",
         "maker-checker",
         "run-evidence",
-        "distribution",
+        "Resolved: keep clone/install/doctor evidence",
         "connectors",
         "governance",
+        "Resolved: keep policy, tests, and verifier output together",
     ):
         assert phrase in loop
     assert "G28 gap register" in state
@@ -441,6 +466,7 @@ def test_ci_workflow_runs_loop_engineering_gates():
     for phrase in (
         "scripts/loop_audit.py",
         "scripts/validate_plugin_package.py",
+        "scripts/check_governance.py",
         "tests/test_goal_guard.py",
     ):
         assert phrase in text
@@ -456,7 +482,7 @@ def test_ci_workflow_runs_loop_engineering_gates():
     audit = json.loads(result.stdout)
     assert audit["signals"]["githubWorkflows"] is True
     assert isinstance(audit["signals"]["githubRemote"], bool)
-    assert audit["level"] == "L2"
+    assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidence"] else "L2")
 
 
 def test_loop_audit_reports_unresolved_gap_register_items():
@@ -469,13 +495,114 @@ def test_loop_audit_reports_unresolved_gap_register_items():
 
     assert result.returncode == 0, result.stderr
     audit = json.loads(result.stdout)
-    assert audit["signals"]["gapRegister"] is True
-    assert "remote-ci" in audit["unresolvedGaps"]
-    assert "distribution" in audit["unresolvedGaps"]
-    if audit["signals"]["githubRemote"]:
-        assert audit["nextAction"] == "Append remote-ci-readback evidence after the workflow passes."
-    else:
-        assert audit["nextAction"] == "Add GitHub remote, push, and read back the workflow result."
+    assert audit["signals"]["gapRegister"] is False
+    assert audit["signals"]["repeatedRunEvidence"] is True
+    assert "remote-ci" not in audit["unresolvedGaps"]
+    assert "distribution" not in audit["unresolvedGaps"]
+    assert "maker-checker" not in audit["unresolvedGaps"]
+    assert "governance" not in audit["unresolvedGaps"]
+    assert "run-evidence" not in audit["unresolvedGaps"]
+    assert "connectors" not in audit["unresolvedGaps"]
+    assert audit["unresolvedGaps"] == []
+    assert audit["nextAction"] == "No unresolved loop-engineering gaps."
+
+
+def make_governance_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "base"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    write_file(
+        root / "loop-governance.json",
+        json.dumps(
+            {
+                "approvalEnv": "GOAL_MATRIX_APPROVED",
+                "approvalRequiredPaths": ["package.json"],
+                "blockedPaths": [".goal-matrix/**"],
+                "publishActionPatterns": ["npm publish"],
+            }
+        ),
+    )
+
+
+def test_governance_blocks_approval_required_paths_without_approval():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+
+        denied = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        approved = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env={**os.environ, "GOAL_MATRIX_APPROVED": "1"},
+        )
+
+    assert denied.returncode == 1
+    assert "package.json requires approval" in denied.stderr
+    assert approved.returncode == 0, approved.stderr
+
+
+def test_governance_blocks_publish_actions_without_approval():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / ".github" / "workflows" / "release.yml", "steps:\n  - run: echo ok\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "workflow"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(root / ".github" / "workflows" / "release.yml", "steps:\n  - run: npm publish\n")
+
+        denied = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert denied.returncode == 1
+    assert "publish action requires approval" in denied.stderr
+
+
+def test_distribution_readback_is_recorded_from_remote_source():
+    log = read_text("loop-run-log.md")
+    for phrase in (
+        "distribution-readback",
+        "remote-source-install-verified",
+        "package_validation_ok",
+        "doctor_installed_skill_matches_adapter",
+        "doctor_installed_verifier_skill_matches_adapter",
+        "b94dcc92102a23d27afb2b0d9a2bb48e56e8d388",
+    ):
+        assert phrase in log
+
+
+def test_maker_checker_worktree_evidence_is_recorded():
+    log = read_text("loop-run-log.md")
+    for phrase in (
+        '"pattern":"maker-checker"',
+        '"branch":"codex/g42-maker-checker"',
+        '"maker_commit":"51134ff"',
+        '"checker_command":"python3 scripts/loop_verify.py"',
+        '"checker_result":"pass"',
+    ):
+        assert phrase in log
 
 
 def test_loop_audit_does_not_report_l3_without_remote_run_evidence():
@@ -491,8 +618,181 @@ def test_loop_audit_does_not_report_l3_without_remote_run_evidence():
     simulated_score = audit["score"] + 6
     assert simulated_score >= 78
     assert audit["signals"]["githubWorkflows"] is True
-    assert audit["signals"]["remoteRunEvidence"] is False
-    assert audit["level"] == "L2"
+    assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidence"] else "L2")
+
+
+def test_loop_audit_l3_requires_remote_run_evidence():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://example.invalid/repo.git"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(root / "STATE.md", "Last run: now\n\n## High Priority\n\n## Watch List\n")
+        write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(root / "loop-run-log.md", "# Runs\n\n## Recent Runs\n{\"outcome\":\"local\"}\n")
+        write_file(
+            root / "LOOP.md",
+            """# Loop
+
+## Active Loops
+package-triage
+
+## Loop Engineering Completion Matrix
+Readiness Levels
+remote-ci-activity
+
+## Engineering Gap Register
+| Gap | Current state | Missing for loop-engineering parity | Next action |
+| --- | --- | --- | --- |
+| remote-ci | remote exists | Actions evidence | Add remote, push, read check result |
+
+## Human Gates
+## Budget
+""",
+        )
+        write_file(
+            root / "adapters" / "codex" / "skills" / "loop-verifier" / "SKILL.md",
+            "independent verifier\ntruth source\nreject completion\n",
+        )
+        (root / ".github" / "workflows").mkdir(parents=True)
+
+        missing = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        write_file(
+            root / "loop-run-log.md",
+            "# Runs\n\n## Recent Runs\nremote-ci-readback github-check-run\n",
+        )
+        prose = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        write_file(
+            root / "loop-run-log.md",
+            '# Runs\n\n## Recent Runs\n{"outcome":"remote-ci-readback","run_url":"https://example.invalid/run"}\n',
+        )
+        incomplete = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        write_file(
+            root / "loop-run-log.md",
+            (
+                '# Runs\n\n## Recent Runs\n'
+                '{"pattern":"github-check-run","outcome":"remote-ci-readback",'
+                '"run_status":"completed","run_conclusion":"success",'
+                '"run_url":"https://example.invalid/run","head_sha":"abc123"}\n'
+            ),
+        )
+        present = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert missing.returncode == 0, missing.stderr
+    missing_audit = json.loads(missing.stdout)
+    assert missing_audit["signals"]["githubRemote"] is True
+    assert missing_audit["signals"]["githubWorkflows"] is True
+    assert missing_audit["signals"]["remoteRunEvidence"] is False
+    assert missing_audit["level"] == "L2"
+
+    assert prose.returncode == 0, prose.stderr
+    prose_audit = json.loads(prose.stdout)
+    assert prose_audit["signals"]["remoteRunEvidence"] is False
+    assert prose_audit["level"] == "L2"
+
+    assert incomplete.returncode == 0, incomplete.stderr
+    incomplete_audit = json.loads(incomplete.stdout)
+    assert incomplete_audit["signals"]["remoteRunEvidence"] is False
+    assert incomplete_audit["level"] == "L2"
+
+    assert present.returncode == 0, present.stderr
+    present_audit = json.loads(present.stdout)
+    assert present_audit["signals"]["remoteRunEvidence"] is True
+    assert present_audit["level"] == "L3"
+
+
+def test_loop_audit_detects_remote_from_linked_worktree():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        worktree = Path(tmp) / "worktree"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://example.invalid/repo.git"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(repo / "STATE.md", "Last run: now\n\n## High Priority\n\n## Watch List\n")
+        write_file(repo / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(repo / "loop-run-log.md", "# Runs\n\n## Recent Runs\n{\"outcome\":\"local\"}\n")
+        write_file(
+            repo / "LOOP.md",
+            """# Loop
+
+## Active Loops
+package-triage
+
+## Loop Engineering Completion Matrix
+Readiness Levels
+remote-ci-activity
+
+## Engineering Gap Register
+| Gap | Current state | Missing for loop-engineering parity | Next action |
+| --- | --- | --- | --- |
+| maker-checker | verifier exists | worktree evidence | Add when remote branch exists |
+
+## Human Gates
+## Budget
+""",
+        )
+        write_file(
+            repo / "adapters" / "codex" / "skills" / "loop-verifier" / "SKILL.md",
+            "independent verifier\ntruth source\nreject completion\n",
+        )
+        (repo / ".github" / "workflows").mkdir(parents=True)
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "init"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "worktree", "add", str(worktree), "-b", "checker"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(worktree), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["githubRemote"] is True
 
 
 def test_loop_verify_script_and_ci_share_one_gate():
@@ -503,9 +803,12 @@ def test_loop_verify_script_and_ci_share_one_gate():
     for phrase in (
         "scripts/loop_audit.py",
         "scripts/validate_plugin_package.py",
+        "scripts/check_governance.py",
         "tests/test_goal_guard.py",
         "py_compile",
         "git diff --check",
+        "PYTHONPYCACHEPREFIX",
+        "Path.cwd()",
     ):
         assert phrase in text
     assert "python3 scripts/loop_verify.py" in workflow.read_text(encoding="utf-8")
@@ -541,14 +844,14 @@ def test_repository_content_has_no_private_project_context():
         assert pattern not in text
 
 
-def test_session_start_injects_fused_rules():
+def test_session_start_injects_execution_rules():
     result = run_guard(["hook", "SessionStart"], "{}")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["systemMessage"] == "GOAL-MATRIX:ACTIVE"
-    assert "Superpowers discipline" in hook_context(payload)
-    assert "Ponytail scope" in hook_context(payload)
+    assert "Execution discipline" in hook_context(payload)
+    assert "Scope control" in hook_context(payload)
 
 
 def test_session_start_injects_initialization_governance():
@@ -612,8 +915,11 @@ def test_session_start_injects_lifecycle_cli_commands():
     for phrase in (
         "goal_guard.py classify",
         "goal_guard.py init",
+        "goal_guard.py start",
+        "goal_guard.py checkpoint",
         "goal_guard.py status",
         "goal_guard.py gate",
+        "goal_guard.py publish-gate",
         "goal_guard.py audit",
     ):
         assert phrase in context
@@ -734,12 +1040,56 @@ def test_stop_hook_demands_next_loop_handoff():
     context = hook_context(json.loads(result.stdout))
     assert "Next loop:" in context
     assert "select next pending goal" in context
+    assert "continue with it before final completion" in context
+
+
+def test_user_prompt_submit_triggers_for_self_evolution_runs():
+    prompt = json.dumps({"prompt": "开始自我进化，连续迭代到预算、阻塞或没有 pending goal"})
+    result = run_guard(["hook", "UserPromptSubmit"], prompt)
+
+    assert result.returncode == 0, result.stderr
+    context = hook_context(json.loads(result.stdout))
+    assert "self-evolution run" in context
+    assert "budget, blocker, or no pending goal" in context
 
 
 def test_codex_hook_config_wires_loop_events():
-    hooks = json.loads(read_text("adapters/codex/hooks/claude-codex-hooks.json"))["hooks"]
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
         assert event in hooks
+
+
+def test_codex_hook_config_invokes_lifecycle_commands():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    user_prompt_command = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+
+    assert " hook UserPromptSubmit" in user_prompt_command
+    assert " start --root ." in user_prompt_command
+    assert "CODEX_PLUGIN_ROOT" in user_prompt_command
+    assert " publish-gate --root . --hook" in pre_tool_command
+    assert " hook PreToolUse" in pre_tool_command
+    assert " checkpoint --if-active --root . --" not in stop_command
+    assert " gate --phase review_gate --root . --verify" in stop_command
+    assert "scripts/loop_verify.py" in stop_command
+    assert " hook Stop" in stop_command
+
+
+def test_public_package_copy_uses_generic_scope_language():
+    banned = ("pony" + "tail", "super" + "power", "super" + "powers", "cl" + "aud")
+    paths = (
+        "README.md",
+        "README.zh.md",
+        ".codex-plugin/plugin.json",
+        "adapters/codex/README.md",
+        "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
+        "adapters/codex/skills/goal-matrix-iterative-delivery/agents/openai.yaml",
+        "core/goal_guard.py",
+    )
+    text = "\n".join(read_text(path).lower() for path in paths)
+    for token in banned:
+        assert token not in text
 
 
 def test_user_prompt_submit_reports_missing_project_initialization():
@@ -1083,6 +1433,78 @@ def write_file(path, text):
     path.write_text(text, encoding="utf-8")
 
 
+def git_commit(root, path, text, message):
+    write_file(root / path, text)
+    subprocess.run(["git", "add", path], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", message],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def make_publish_repo(root):
+    remote = root / "remote.git"
+    repo = root / "repo"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git_commit(repo, "README.md", "base\n", "base")
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo, check=True, capture_output=True, text=True)
+    return repo
+
+
+def test_publish_gate_rejects_fragmented_history_before_push():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+        git_commit(repo, "two.txt", "two\n", "two")
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 1
+    assert "fragmented history" in result.stderr
+
+
+def test_publish_gate_accepts_single_commit_before_push():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_publish_gate_hook_ignores_non_push_tools():
+    payload = json.dumps({"tool_input": {"cmd": "git status --short"}})
+    result = run_guard(["publish-gate", "--root", str(ROOT), "--hook"], payload)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_publish_gate_hook_rejects_push_with_fragmented_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+        git_commit(repo, "two.txt", "two\n", "two")
+        payload = json.dumps({"tool_input": {"cmd": "git push origin HEAD"}})
+
+        result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
+
+    assert result.returncode == 1
+    assert "fragmented history" in result.stderr
+
+
 def test_status_command_reports_active_and_next_loop():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -1178,6 +1600,162 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["nextLoop"] is None
+
+
+def test_start_command_creates_pending_active_goal_from_prompt():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "goal iteration still does not start")
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert started.returncode == 0, started.stderr
+    payload = json.loads(started.stdout)
+    assert payload["activeGoal"] == "G1 - goal iteration still does not start"
+
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - goal iteration still does not start"
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["id"] == "G1"
+    assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
+
+
+def test_start_command_keeps_existing_active_goal():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "first goal").returncode == 0
+
+        second = run_guard(["start", "--root", tmp], "second goal")
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["activeGoal"] == "G1 - first goal"
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - first goal"
+    assert status["goalMatrix"]["total"] == 1
+    assert status["goalMatrix"]["pending"] == 1
+
+
+def test_start_command_extracts_prompt_from_hook_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps({"prompt": "goal matrix 工程化"}))
+
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout)["activeGoal"] == "G1 - goal matrix 工程化"
+
+
+def test_checkpoint_command_requires_passing_verification_before_advancing_goal():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+
+        failed = run_guard(["checkpoint", "--root", tmp, "--", sys.executable, "-c", "raise SystemExit(7)"])
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert failed.returncode == 7
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - ship real loop step"
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
+
+
+def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+
+        verified = run_guard(
+            [
+                "checkpoint",
+                "--root",
+                tmp,
+                "--",
+                sys.executable,
+                str(GUARD),
+                "status",
+                "--root",
+                tmp,
+            ]
+        )
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert verified.returncode == 0, verified.stderr
+    payload = json.loads(verified.stdout)
+    assert payload["completedGoal"] == "G1 - ship real loop step"
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] is None
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["childGoals"][0]["status"] == "Done"
+
+
+def test_checkpoint_command_promotes_next_pending_goal_for_self_evolution_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+| G1 | First slice | Implement first slice | Tests | unit test | Pending |
+| G2 | Second slice | Implement second slice | Logs | log readback | Pending |
+""",
+        )
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: G1 - First slice
+Initialization type: iteration
+Policy impact: none
+Touched paths: tests/test_goal_guard.py
+Delivery boundary: first slice only
+Skipped: second slice
+Truth source: Tests
+Verification: unit test
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+
+        verified = run_guard(
+            [
+                "checkpoint",
+                "--root",
+                tmp,
+                "--",
+                sys.executable,
+                str(GUARD),
+                "status",
+                "--root",
+                tmp,
+            ]
+        )
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert verified.returncode == 0, verified.stderr
+    payload = json.loads(verified.stdout)
+    assert payload["completedGoal"] == "G1 - First slice"
+    assert payload["nextActiveGoal"] == "G2 - Second slice"
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G2 - Second slice"
+    assert status["nextLoop"] is None
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["status"] == "Done"
+    assert status["goalMatrix"]["childGoals"][1]["status"] == "Pending"
+
+
+def test_checkpoint_if_active_ignores_missing_active_goal():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        result = run_guard(["checkpoint", "--if-active", "--root", tmp, "--", sys.executable, "-c", "raise SystemExit(9)"])
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 def test_doctor_command_reports_resume_and_plugin_source():
@@ -1281,13 +1859,25 @@ def test_gate_command_returns_execute_for_failed_review():
     assert "review requested changes" in decision["reason"]
 
 
-def test_gate_command_returns_checkpoint_after_verified_review():
+def test_gate_command_rejects_review_incantation_without_machine_verification():
     text = "Clarity decision: proceed. Verified with tests. Reviewer: approved"
     result = run_guard(["gate", "--phase", "review_gate"], text)
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
     decision = json.loads(result.stdout)
-    assert decision["next"] == "checkpoint"
+    assert decision["next"] == "execute"
+    assert "machine verification" in decision["reason"]
+
+
+def test_gate_command_returns_checkpoint_after_machine_verified_review():
+    text = "Clarity decision: proceed. Reviewer: approved"
+    result = run_guard(
+        ["gate", "--phase", "review_gate", "--verify", sys.executable, "-c", "raise SystemExit(0)"],
+        text,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["next"] == "checkpoint"
 
 
 def test_gate_command_reads_loop_note_from_root_when_stdin_is_empty():
@@ -1299,7 +1889,9 @@ def test_gate_command_reads_loop_note_from_root_when_stdin_is_empty():
             "Clarity decision: proceed\nVerified with tests\nReviewer: approved\n",
         )
 
-        result = run_guard(["gate", "--phase", "review_gate", "--root", tmp])
+        result = run_guard(
+            ["gate", "--phase", "review_gate", "--root", tmp, "--verify", sys.executable, "-c", "raise SystemExit(0)"]
+        )
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["next"] == "checkpoint"

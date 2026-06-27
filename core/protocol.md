@@ -57,6 +57,8 @@ Use the shared guard to create the baseline files for a target project:
 ```bash
 printf '新项目立项...' | python3 core/goal_guard.py classify
 python3 core/goal_guard.py init --root /path/to/project --type iteration
+printf '修复下一个有边界的目标' | python3 core/goal_guard.py start --root /path/to/project
+python3 core/goal_guard.py checkpoint --root /path/to/project -- python3 scripts/loop_verify.py
 ```
 
 The command creates missing `.goal-matrix` files from `core/templates/`, creates `specs/` and `goals/`, writes the requested initialization type into a new policy file, and does not overwrite existing project files.
@@ -110,7 +112,9 @@ Every engineering pass is a closed loop:
 project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
 ```
 
-Use small local checkpoint commits after verified child goals. Before pushing, squash or merge fragmented local commits into readable history unless the user asks to preserve every checkpoint.
+Use small local checkpoint commits after verified child goals. Before pushing, squash or merge fragmented local commits into readable history unless the user asks to preserve every checkpoint. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push` so this policy can fail closed.
+
+A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
 
 ## Hook phase gates
 
@@ -120,7 +124,7 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 | --- | --- |
 | `SessionStart` | Show project initialization status and loop policy. |
 | `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`. |
-| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known. |
+| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block `git push` when publish history is fragmented. |
 | `PostToolUse` | Tie tool output back to the active goal truth source or next step. |
 | `Stop` | Require verification, checkpoint/status evidence, and push history policy before completion. |
 
@@ -140,4 +144,4 @@ Completion requires verification, truth-source evidence, and an updated matrix/s
 
 ## Adapter rule
 
-Adapters are thin. Codex, Claude Code, Cursor, and generic instruction hosts must all carry these same invariants.
+Adapters are thin. Codex and future hook-capable hosts must carry these same invariants.

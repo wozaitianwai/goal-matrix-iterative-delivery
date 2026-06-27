@@ -1,25 +1,34 @@
 # Codex Adapter
 
-Codex is the first fully wired host adapter.
+Codex is the only lifecycle adapter wired in this package.
 
-## Install
+## Install From This Checkout
 
 ```bash
-python3 scripts/install_adapter.py codex --scope global
+codex plugin marketplace add .
+codex plugin add goal-matrix-iterative-delivery@goal-matrix-local
 ```
 
-This syncs the Codex skill into `CODEX_HOME` and does not edit Codex config or marketplace files.
+Trust the plugin hooks in Codex Desktop, then restart Codex once.
+
+## Initialize One Project
+
+```bash
+python3 scripts/install_adapter.py codex --target /path/to/project
+```
+
+Project initialization writes `.goal-matrix/` state only. It does not edit Codex config.
 
 ## Files
 
-- `.codex-plugin/plugin.json`: Codex plugin manifest at the repository root.
-- `adapters/codex/hooks/claude-codex-hooks.json`: lifecycle hook wiring.
+- Root plugin manifest: plugin metadata and hook path.
+- `adapters/codex/hooks/codex-lifecycle-hooks.json`: lifecycle hook wiring.
 - `adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md`: skill entry point.
-- `core/goal_guard.py`: shared guard and text audit executable.
+- `core/goal_guard.py`: shared guard, publish gate, and text audit executable.
 
-The adapter must stay thin. Workflow rules belong in `core/protocol.md`; Codex files only package those rules for Codex.
+The adapter stays thin. Workflow rules belong in `core/protocol.md`; Codex files only package those rules for Codex.
 
-Codex is the only adapter in this package with lifecycle hook wiring. The lifecycle hook injects context only. A visible Codex goal still requires the agent to call `create_goal`.
+Lifecycle hooks inject context and can block unsafe publish actions. A visible Codex goal still requires the agent to call `create_goal`.
 
 ## Local Package Check
 

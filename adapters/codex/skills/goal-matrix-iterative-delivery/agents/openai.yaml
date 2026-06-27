@@ -1,6 +1,6 @@
 interface:
   display_name: "Goal Matrix Delivery"
-  short_description: "Goal matrix execution with Ponytail scope control"
+  short_description: "Goal matrix execution with tight scope control"
   default_prompt: "Use goal-matrix-iterative-delivery: create a goal matrix, execute one active child goal, verify it, and keep scope minimal."
 policy:
   allow_implicit_invocation: true

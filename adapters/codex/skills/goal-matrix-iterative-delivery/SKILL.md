@@ -1,13 +1,13 @@
 ---
 name: goal-matrix-iterative-delivery
-description: Use when the user asks for goal matrix delivery, child goals, iterative execution, engineering constraints, Superpowers, Ponytail, hooks, or goal self-correction.
+description: Use when the user asks for goal matrix delivery, child goals, iterative execution, engineering constraints, hooks, or goal self-correction.
 ---
 
 # Goal Matrix Iterative Delivery
 
 ## Overview
 
-Fuse Superpowers discipline, Ponytail scope control, Codex hooks, and the user's high-frequency operating habits: make the goal visible, execute one child goal, verify against a real truth source, then checkpoint.
+Fuse execution discipline, scope control, Codex hooks, and the user's high-frequency operating habits: make the goal visible, execute one child goal, verify against a real truth source, then checkpoint.
 
 This skill is the Codex adapter entry point. The portable source of truth is `core/protocol.md`; host-specific files live under `adapters/`.
 
@@ -21,11 +21,11 @@ This skill is the Codex adapter entry point. The portable source of truth is `co
 - Truth source
 - Checkpoint
 
-## Fusion Sources
+## Operating Sources
 
-- Superpowers: planning gates, TDD/debugging discipline, verification before completion.
-- Ponytail: YAGNI, existing code first, stdlib/native first, no speculative systems.
-- Codex: hook-injected reminders at session start and goal-like prompts.
+- Planning gates, TDD/debugging discipline, and verification before completion.
+- YAGNI, existing code first, stdlib/native first, and no speculative systems.
+- Codex hook-injected reminders at session start and goal-like prompts.
 - User habits: truth-source first, scope-narrowing first, read-only requests stay read-only.
 
 ## Skill and plugin routing
@@ -50,8 +50,8 @@ Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Chec
 1. Intake: read project instructions, existing docs, likely touched files, and user-named truth sources.
 2. Matrix: turn broad work into user outcome, engineering slice, truth source, verification.
 3. Active goal: select one child goal and state boundary, skipped scope, and check.
-4. Development flow: write the Superpowers-style process for this child goal.
-5. Execute: trace the real flow, then apply the Ponytail ladder.
+4. Development flow: write the concrete process for this child goal.
+5. Execute: trace the real flow, then apply the scope-control ladder.
 6. Verify: use a real source: test, build, API/DB/log readback, browser check, or project script.
 7. Checkpoint: update matrix/status and report what was skipped.
 
@@ -64,8 +64,10 @@ project initialization status -> active goal -> failing check -> minimal change 
 ```
 
 - Show whether `.goal-matrix/project-policy.json` is initialized before the first child goal.
+- A self-evolution run keeps one active child goal at a time, but continues after each verified checkpoint by promoting the next pending goal; stop only at budget, blocker, or no pending goal.
 - Use small local checkpoint commits only after verified child goals.
 - Before push, squash or merge fragmented local commits into readable history unless the user asks to preserve them.
+- `PreToolUse` must run `goal_guard.py publish-gate` before `git push` so fragmented history fails closed.
 - Final push needs final verification evidence and a clear branch/history state.
 
 ## Loop stage chain
@@ -78,7 +80,7 @@ project_initialization -> work_classification -> design -> design_gate -> execut
 
 - `SessionStart`: show initialization status and loop policy.
 - `UserPromptSubmit`: classify the request into `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`.
-- `PreToolUse`: keep the next action to one active-goal step.
+- `PreToolUse`: keep the next action to one active-goal step and block unsafe publish actions.
 - `PostToolUse`: connect tool output to truth source, verification, or next step.
 - `Stop`: require verification, checkpoint/status evidence, and push history policy before completion.
 - Unclear drafts need `Clarity decision:` before execution, and only one `Active goal:` can be exposed at a time.

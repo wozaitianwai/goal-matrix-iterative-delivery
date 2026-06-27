@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -27,8 +28,12 @@ def has_phrases(root, rel, phrases):
 
 
 def has_github_remote(root):
-    config = root / ".git" / "config"
-    return config.is_file() and "[remote " in config.read_text(encoding="utf-8", errors="ignore")
+    result = subprocess.run(
+        ["git", "-C", str(root), "config", "--get-regexp", r"^remote\..*\.url$"],
+        text=True,
+        capture_output=True,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def unresolved_gaps(root):
@@ -40,8 +45,14 @@ def unresolved_gaps(root):
     for line in text.splitlines():
         if not line.startswith("| "):
             continue
-        name = line.split("|", 2)[1].strip()
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        name = cells[0]
+        next_action = cells[3]
         if name in {"Gap", "---"}:
+            continue
+        if next_action.lower().startswith("resolved:"):
             continue
         if name in {"remote-ci", "maker-checker", "run-evidence", "distribution", "connectors", "governance"}:
             gaps.append(name)
@@ -52,8 +63,43 @@ def has_remote_run_evidence(root):
     path = root / "loop-run-log.md"
     if not path.is_file():
         return False
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    return "remote-ci-readback" in text or "github-check-run" in text
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        is_remote_ci = (
+            record.get("pattern") == "github-check-run"
+            or record.get("outcome") == "remote-ci-readback"
+        )
+        is_success = record.get("run_status") == "completed" and record.get("run_conclusion") == "success"
+        has_readback = bool(record.get("run_url")) and bool(record.get("head_sha"))
+        if is_remote_ci and is_success and has_readback:
+            return True
+    return False
+
+
+def has_repeated_run_evidence(root):
+    path = root / "loop-run-log.md"
+    if not path.is_file():
+        return False
+    count = 0
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("run_id") and record.get("outcome"):
+            count += 1
+    return count >= 2
 
 
 def audit(root):
@@ -75,6 +121,7 @@ def audit(root):
     signals["githubRemote"] = has_github_remote(root)
     signals["githubWorkflows"] = (root / ".github" / "workflows").is_dir()
     signals["remoteRunEvidence"] = has_remote_run_evidence(root)
+    signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
 
     score = 10
     score += 18 if signals["stateFile"] else 0
@@ -125,6 +172,15 @@ def audit(root):
         "L3": "L3 remote CI loop evidence present.",
     }[level]
 
+    if not gaps:
+        next_action = "No unresolved loop-engineering gaps."
+    elif not signals["githubRemote"]:
+        next_action = "Add GitHub remote, push, and read back the workflow result."
+    elif not signals["remoteRunEvidence"]:
+        next_action = "Append remote-ci-readback evidence after the workflow passes."
+    else:
+        next_action = "Review L3 evidence and continue unresolved gap register."
+
     return {
         "target": str(root),
         "score": min(score, 100),
@@ -133,7 +189,7 @@ def audit(root):
         "assessment": assessment,
         "signals": signals,
         "unresolvedGaps": gaps,
-        "nextAction": "Add GitHub remote, push, and read back the workflow result." if not signals["githubRemote"] else "Append remote-ci-readback evidence after the workflow passes.",
+        "nextAction": next_action,
         "blocked": blocked,
         "recommendations": recommendations,
     }

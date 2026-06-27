@@ -8,21 +8,9 @@ from pathlib import Path
 ADAPTERS = {
     "codex": (
         "adapters/codex/README.md",
-        "adapters/codex/hooks/claude-codex-hooks.json",
+        "adapters/codex/hooks/codex-lifecycle-hooks.json",
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
         "adapters/codex/skills/loop-verifier/SKILL.md",
-    ),
-    "cursor": (
-        "adapters/cursor/README.md",
-        "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-    ),
-    "claude-code": (
-        "adapters/claude-code/README.md",
-        "adapters/claude-code/CLAUDE.md",
-    ),
-    "generic": (
-        "adapters/generic/README.md",
-        "adapters/generic/AGENTS.md",
     ),
 }
 
@@ -40,9 +28,6 @@ ASSETS = (
 
 INSTRUCTION_FILES = (
     "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
-    "adapters/cursor/goal-matrix-iterative-delivery.mdc",
-    "adapters/claude-code/CLAUDE.md",
-    "adapters/generic/AGENTS.md",
 )
 
 INSTRUCTION_PHRASES = (
@@ -119,12 +104,7 @@ def validate(root):
         for phrase in INSTRUCTION_PHRASES:
             require_phrase(root, rel, phrase, errors)
 
-    for rel in (
-        "adapters/codex/README.md",
-        "adapters/cursor/README.md",
-        "adapters/claude-code/README.md",
-        "adapters/generic/README.md",
-    ):
+    for rel in ("adapters/codex/README.md",):
         for phrase in ("install_adapter.py", "validate_plugin_package.py", "goal_guard.py doctor", "goal_guard.py audit"):
             require_phrase(root, rel, phrase, errors)
 

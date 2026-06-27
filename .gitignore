@@ -6,7 +6,7 @@
 .codex/
 .goal-matrix/
 plugins/
-docs/superpowers/
+docs/workflows/
 
 # Python cache
 __pycache__/

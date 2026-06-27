@@ -1,0 +1,26 @@
+{
+  "approvalEnv": "GOAL_MATRIX_APPROVED",
+  "approvalRequiredPaths": [
+    ".env",
+    ".env.*",
+    "infra/**",
+    "schema/**",
+    "migrations/**",
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml"
+  ],
+  "blockedPaths": [
+    ".agents/**",
+    ".codex/**",
+    ".goal-matrix/**",
+    "plugins/**"
+  ],
+  "publishActionPatterns": [
+    "npm publish",
+    "twine upload",
+    "gh release",
+    "pypi-publish",
+    "softprops/action-gh-release"
+  ]
+}

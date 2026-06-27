@@ -168,6 +168,10 @@ def test_manifest_wires_skill_and_hooks():
     assert manifest["hooks"] == "./adapters/codex/hooks/codex-lifecycle-hooks.json"
     assert "hook-backed" in manifest["description"]
     assert "truth-source verification" in manifest["interface"]["longDescription"]
+    assert manifest["author"]["url"] == "https://github.com/wozaitianwai"
+    assert manifest["homepage"] == "https://github.com/wozaitianwai/goal-matrix-iterative-delivery"
+    assert manifest["repository"] == "https://github.com/wozaitianwai/goal-matrix-iterative-delivery"
+    assert manifest["interface"]["websiteURL"] == "https://github.com/wozaitianwai/goal-matrix-iterative-delivery"
     assert (ROOT / manifest["hooks"]).is_file()
     assert (ROOT / manifest["skills"]).is_dir()
 

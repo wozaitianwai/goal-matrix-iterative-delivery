@@ -3,8 +3,11 @@
   "version": "0.1.0+codex.20260626122349",
   "description": "hook-backed goal-matrix workflow guard for Codex.",
   "author": {
-    "name": "wozaitianwai"
+    "name": "wozaitianwai",
+    "url": "https://github.com/wozaitianwai"
   },
+  "homepage": "https://github.com/wozaitianwai/goal-matrix-iterative-delivery",
+  "repository": "https://github.com/wozaitianwai/goal-matrix-iterative-delivery",
   "license": "MIT",
   "keywords": [
     "goal-matrix",
@@ -25,6 +28,7 @@
       "Instructions",
       "Lifecycle hooks"
     ],
+    "websiteURL": "https://github.com/wozaitianwai/goal-matrix-iterative-delivery",
     "defaultPrompt": [
       "Use goal matrix delivery for this task.",
       "Run one child goal with real verification.",

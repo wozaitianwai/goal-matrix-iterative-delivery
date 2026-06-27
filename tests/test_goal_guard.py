@@ -1082,6 +1082,38 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " hook Stop" in stop_command
 
 
+def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    env = {key: value for key, value in os.environ.items() if key != "CODEX_PLUGIN_ROOT"}
+
+    def run_commands(foreign_root):
+        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
+            command = hooks[event][0]["hooks"][0]["command"]
+            result = subprocess.run(
+                ["/bin/sh", "-c", command],
+                input="{}",
+                text=True,
+                capture_output=True,
+                cwd=foreign_root,
+                env=env,
+            )
+
+            assert result.returncode == 0, f"{event}: {result.stderr}"
+            assert "can't open file" not in result.stderr, f"{event}: {result.stderr}"
+            assert "foreign goal guard executed" not in result.stdout + result.stderr, event
+
+    with tempfile.TemporaryDirectory() as tmp:
+        foreign_root = Path(tmp)
+        assert not (foreign_root / "core" / "goal_guard.py").exists()
+        run_commands(foreign_root)
+
+        write_file(
+            foreign_root / "core" / "goal_guard.py",
+            "import sys\nprint('foreign goal guard executed')\nsys.exit(3)\n",
+        )
+        run_commands(foreign_root)
+
+
 def test_public_package_copy_uses_generic_scope_language():
     banned = ("pony" + "tail", "super" + "power", "super" + "powers", "cl" + "aud")
     paths = (

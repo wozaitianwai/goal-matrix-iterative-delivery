@@ -2,10 +2,12 @@
 .recode
 
 # Local Codex/plugin development state
-.agents/
+.agents/*
+!.agents/plugins/
+!.agents/plugins/marketplace.json
 .codex/
 .goal-matrix/
-plugins/
+/plugins/
 docs/workflows/
 
 # Python cache

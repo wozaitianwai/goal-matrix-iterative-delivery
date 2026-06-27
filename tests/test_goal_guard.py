@@ -182,7 +182,9 @@ def test_git_tracked_files_exclude_local_state_and_overlay_dirs():
 
     assert result.returncode == 0, result.stderr
     tracked = result.stdout.splitlines()
-    for prefix in (".agents/", ".codex/", ".goal-matrix/", "plugins/"):
+    allowed_agents_files = {".agents/plugins/marketplace.json"}
+    assert not any(path.startswith(".agents/") and path not in allowed_agents_files for path in tracked)
+    for prefix in (".codex/", ".goal-matrix/", "plugins/"):
         assert not any(path.startswith(prefix) for path in tracked), prefix
 
 

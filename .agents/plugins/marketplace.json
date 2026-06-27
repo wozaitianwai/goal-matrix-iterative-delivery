@@ -1,0 +1,20 @@
+{
+  "name": "goal-matrix-github",
+  "interface": {
+    "displayName": "Goal Matrix GitHub"
+  },
+  "plugins": [
+    {
+      "name": "goal-matrix-iterative-delivery",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

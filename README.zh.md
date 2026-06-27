@@ -21,11 +21,11 @@
 
 ## 安装
 
-把当前 checkout 作为本地 Codex 插件源安装：
+把 GitHub 仓库作为 Codex 插件源安装：
 
 ```bash
-codex plugin marketplace add .
-codex plugin add goal-matrix-iterative-delivery@goal-matrix-local
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main
+codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
 然后在 Codex Desktop 里 trust 这个插件的 hooks，并重启一次 Codex 让 lifecycle hooks 生效。

@@ -87,7 +87,9 @@ LOOP_STAGES = (
     "design_iteration",
 )
 
-PLUGIN_ID = "goal-matrix-iterative-delivery@goal-matrix-local"
+PLUGIN_NAME = "goal-matrix-iterative-delivery"
+MARKETPLACE_NAME = "goal-matrix-github"
+PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 ALLOW_FRAGMENTED_PUSH_ENV = "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH"
 
 LOOP_CONTEXT = """Loop engineering:
@@ -735,7 +737,7 @@ def doctor_project(root):
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     codex_config = codex_home / "config.toml"
     codex_config_text = codex_config.read_text(encoding="utf-8") if codex_config.is_file() else ""
-    cache_path = codex_home / "plugins" / "cache" / "goal-matrix-local" / "goal-matrix-iterative-delivery" / str(version)
+    cache_path = codex_home / "plugins" / "cache" / MARKETPLACE_NAME / PLUGIN_NAME / str(version)
     hook_state_keys = re.findall(r'^\[hooks\.state\."([^"]+)"\]', codex_config_text, re.MULTILINE)
     installed_skill = codex_home / "skills" / "goal-matrix-iterative-delivery" / "SKILL.md"
     installed_verifier_skill = codex_home / "skills" / "loop-verifier" / "SKILL.md"
@@ -746,11 +748,11 @@ def doctor_project(root):
         "manifestPath": str(manifest_path),
         "adapterSkillPath": str(adapter_skill),
         "codexConfigPath": str(codex_config),
-        "codexMarketplaceConfigured": "[marketplaces.goal-matrix-local]" in codex_config_text,
+        "codexMarketplaceConfigured": f"[marketplaces.{MARKETPLACE_NAME}]" in codex_config_text,
         "codexPluginEnabled": toml_block_enabled(codex_config_text, f'plugins."{PLUGIN_ID}"'),
         "codexCachePath": str(cache_path),
         "codexCacheHasManifest": (cache_path / ".codex-plugin" / "plugin.json").is_file(),
-        "codexHookTrusted": any("goal-matrix-iterative-delivery" in key for key in hook_state_keys),
+        "codexHookTrusted": any(PLUGIN_ID in key for key in hook_state_keys),
         "installedSkillPath": str(installed_skill),
         "installedSkillExists": installed_exists,
         "installedSkillMatchesAdapter": (

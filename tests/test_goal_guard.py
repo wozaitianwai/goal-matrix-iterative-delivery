@@ -202,10 +202,10 @@ def test_public_readmes_are_bilingual_and_hide_development_process_paths():
     assert "validate_plugin_package.py" in english
     assert "初始化项目" in chinese
     assert "Initialize A Project" in english
-    assert "codex plugin marketplace add ." in chinese
-    assert "codex plugin marketplace add ." in english
-    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-local" in chinese
-    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-local" in english
+    assert "codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main" in chinese
+    assert "codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main" in english
+    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-github" in chinese
+    assert "codex plugin add goal-matrix-iterative-delivery@goal-matrix-github" in english
     assert "python3 scripts/install_adapter.py codex --target /path/to/project" in chinese
     assert "python3 scripts/loop_verify.py" in chinese
     assert "python3 scripts/loop_verify.py" in english
@@ -1820,11 +1820,16 @@ def test_doctor_command_reports_codex_runtime_boundaries():
         write_file(
             codex_home / "config.toml",
             """
-[plugins."goal-matrix-iterative-delivery@goal-matrix-local"]
+[marketplaces.goal-matrix-github]
+source_type = "git"
+source = "https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git"
+ref = "main"
+
+[plugins."goal-matrix-iterative-delivery@goal-matrix-github"]
 enabled = true
 """,
         )
-        (codex_home / "plugins" / "cache" / "goal-matrix-local" / "goal-matrix-iterative-delivery" / version).mkdir(
+        (codex_home / "plugins" / "cache" / "goal-matrix-github" / "goal-matrix-iterative-delivery" / version).mkdir(
             parents=True
         )
         env = {**os.environ, "CODEX_HOME": str(codex_home)}
@@ -1837,7 +1842,7 @@ enabled = true
     source = doctor["source"]
     assert runtime["visibleGoalRequiresCreateGoal"] is True
     assert runtime["hookCanCreateCodexGoal"] is False
-    assert source["codexMarketplaceConfigured"] is False
+    assert source["codexMarketplaceConfigured"] is True
     assert source["codexPluginEnabled"] is True
     assert source["codexCacheHasManifest"] is False
     assert source["codexHookTrusted"] is False

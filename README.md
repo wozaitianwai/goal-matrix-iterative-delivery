@@ -21,11 +21,11 @@ Use it when a request is too broad for a single edit and you need the agent to k
 
 ## Install
 
-Install this checkout as a local Codex plugin source:
+Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add .
-codex plugin add goal-matrix-iterative-delivery@goal-matrix-local
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main
+codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
 Then trust the plugin hooks in Codex Desktop and restart Codex once so the lifecycle hooks load.

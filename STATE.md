@@ -25,7 +25,7 @@ Loop paused: false
 - G25/G26/G27 are complete: private GitHub repo exists, clean history is pushed, and GitHub Actions run `28239087462` passed.
 - G41 distribution path is verified from pushed source `b94dcc92102a23d27afb2b0d9a2bb48e56e8d388` using isolated install and doctor readback.
 - G42 maker-checker path is verified on branch `codex/g42-maker-checker` in linked worktree with `python3 scripts/loop_verify.py` passing.
-- G43 governance gate blocks approval-required paths and publish actions unless `GOAL_MATRIX_APPROVED` is set.
+- G43 governance policy is machine-owned in `loop-governance.json`; STATE.md does not repeat approval envs, path lists, or publish patterns.
 - G44 repeated run evidence is machine-checked by `scripts/loop_audit.py`.
 - G45 connector path is explicit: readback works, writes are deferred until an acting remote task exists.
 - Audit now reports unresolved gap register items and the next external action.

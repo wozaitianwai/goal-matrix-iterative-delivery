@@ -21,5 +21,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Python tests
+        run: python3 tests/test_goal_guard.py
+      - name: Package validator
+        run: python3 scripts/validate_plugin_package.py --root .
+      - name: JavaScript extension tests
+        run: node --test pi-extension/test/extension.test.js
+      - name: Installer smoke
+        run: |
+          target="$RUNNER_TEMP/goal-matrix-install-smoke"
+          python3 scripts/install_adapter.py codex --target "$target"
+          test -f "$target/.goal-matrix/project-policy.json"
+      - name: Hook simulation
+        run: |
+          printf '%s\n' '{"prompt":"形成goal 迭代矩阵"}' | python3 core/goal_guard.py hook UserPromptSubmit >/tmp/user-prompt.json
+          printf '%s\n' '{"tool_input":{"cmd":"git status --short"}}' | python3 core/goal_guard.py policy-gate --root . --hook
+          printf '%s\n' '{"tool_input":{"cmd":"git status --short"}}' | python3 core/goal_guard.py publish-gate --root . --hook
+          python3 core/goal_guard.py hook PreToolUse >/tmp/pre-tool.json
+          python3 core/goal_guard.py hook Stop >/tmp/stop.json
       - name: Loop verify
         run: python3 scripts/loop_verify.py

@@ -5,9 +5,11 @@ Codex is the only lifecycle adapter wired in this package.
 ## Install From GitHub
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.1-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
+
+Use the pinned release tag for reproducible installs. Use the moving development branch only when testing unreleased changes.
 
 Trust the plugin hooks in Codex Desktop, then restart Codex once.
 
@@ -25,6 +27,8 @@ To also enforce publish policy for shell or manual pushes:
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
 
+If `.git/hooks/pre-push` already exists, the installer chains it from `.git/hooks/pre-push.goal-matrix.previous`. To restore the original hook, move that file back to `.git/hooks/pre-push`.
+
 ## Files
 
 - Root plugin manifest: plugin metadata and hook path.
@@ -38,7 +42,7 @@ Lifecycle hooks inject context and can block unsafe publish actions. A visible C
 
 ## Project Notifications
 
-The Codex extension registers `/goal-notify`. It uses `ctx.ui.notify` for Codex popup notifications; it does not send chat messages for notification status.
+The packaged `pi.extensions` entry loads `pi-extension/index.js`, which registers `/goal-notify`. It uses `ctx.ui.notify` for Codex popup notifications; it does not send chat messages for notification status.
 
 Project initialization creates notification settings and gitignores the local secret override file. Common webhook payload presets are available through `/goal-notify templates`; enable webhook delivery in project config and keep real URLs in the local override file or `GOAL_MATRIX_WEBHOOK_URL`.
 
@@ -49,3 +53,9 @@ python3 scripts/validate_plugin_package.py --root .
 python3 core/goal_guard.py doctor --root .
 python3 core/goal_guard.py audit --root .
 ```
+
+Internal docs:
+
+- Operations, migration, uninstall, and debug: `docs/operations.md`.
+- Workflow examples: `docs/examples.md`.
+- Threat model and enforcement boundaries: `docs/threat-model.md`.

@@ -36,13 +36,25 @@ def install_native_pre_push_hook(target):
     if not git_dir.is_dir():
         raise SystemExit("--install-git-hook requires an initialized git repository")
     hook = git_dir / "hooks" / "pre-push"
+    previous = git_dir / "hooks" / "pre-push.goal-matrix.previous"
     if hook.exists():
-        raise SystemExit(f"{hook} already exists; merge the publish gate manually")
+        existing = hook.read_text(encoding="utf-8", errors="ignore")
+        if "goal_guard.py" in existing and "publish-gate" in existing:
+            return hook
+        if previous.exists():
+            raise SystemExit(f"{hook} and {previous} already exist; restore or merge the hook manually")
+        hook.rename(previous)
     hook.write_text(
         f"""#!/bin/sh
 set -eu
 repo_root=$(git rev-parse --show-toplevel)
 python3 "{ROOT / "core" / "goal_guard.py"}" publish-gate --root "$repo_root"
+previous_hook="$repo_root/.git/hooks/pre-push.goal-matrix.previous"
+if [ -x "$previous_hook" ]; then
+  "$previous_hook" "$@"
+elif [ -f "$previous_hook" ]; then
+  sh "$previous_hook" "$@"
+fi
 """,
         encoding="utf-8",
     )

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "initializationType": "new-project",
+  "triggerMode": "narrow",
   "immutablePaths": [],
   "approvalRequiredPaths": [
     ".env",

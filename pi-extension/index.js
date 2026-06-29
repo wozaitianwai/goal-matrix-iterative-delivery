@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
     events: ["session_start", "agent_end"],
     provider: "generic",
     urlEnv: "GOAL_MATRIX_WEBHOOK_URL",
+    eventFields: ["event", "message", "provider"],
     presets: {},
   },
 };
@@ -89,25 +90,94 @@ function webhookUrl(config) {
   return config.webhook?.url || (envName ? process.env[envName] : "");
 }
 
-async function sendWebhook(config, eventName, message) {
+function safeWebhookUrl(config) {
+  const rawUrl = webhookUrl(config);
+  if (!rawUrl) return null;
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  const allowedHosts = Array.isArray(config.webhook?.allowedHosts) ? config.webhook.allowedHosts : [];
+  if (allowedHosts.length && !allowedHosts.includes(parsed.hostname)) return null;
+  return parsed.toString();
+}
+
+function redactedWebhookUrl(url) {
+  if (!url) return null;
+  const parsed = new URL(url);
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = parsed.search ? "?redacted=1" : "";
+  return parsed.toString();
+}
+
+function webhookVariables(config, eventName, message, provider) {
+  const allowed = Array.isArray(config.webhook?.eventFields)
+    ? config.webhook.eventFields
+    : DEFAULT_CONFIG.webhook.eventFields;
+  const source = { event: eventName, message, provider };
+  return Object.fromEntries(allowed.filter((field) => field in source).map((field) => [field, source[field]]));
+}
+
+function webhookRequest(config, eventName, message) {
   if (!webhookEventEnabled(config, eventName)) return false;
-  const url = webhookUrl(config);
+  const url = safeWebhookUrl(config);
   if (!url || typeof globalThis.fetch !== "function") return false;
 
   const provider = config.webhook?.provider || "generic";
   const preset = config.webhook?.presets?.[provider] || config.webhook?.presets?.generic || {};
-  const variables = { event: eventName, message, provider };
+  const variables = webhookVariables(config, eventName, message, provider);
   const body = templateValue(preset.body || { text: "{{message}}" }, variables);
+  const timeoutMs = Number.isFinite(config.webhook?.timeoutMs) ? config.webhook.timeoutMs : 5000;
+  return {
+    url,
+    event: eventName,
+    provider,
+    method: preset.method || "POST",
+    headers: templateValue(preset.headers || { "Content-Type": "application/json" }, variables),
+    body,
+    timeoutMs,
+  };
+}
+
+export function previewWebhook(config, eventName, message) {
+  const request = webhookRequest(config, eventName, message);
+  if (!request) {
+    return { dryRun: true, enabled: false, event: eventName };
+  }
+  return {
+    dryRun: true,
+    enabled: true,
+    event: request.event,
+    provider: request.provider,
+    url: redactedWebhookUrl(request.url),
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+  };
+}
+
+export async function sendWebhook(config, eventName, message) {
+  const request = webhookRequest(config, eventName, message);
+  if (!request) return false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), request.timeoutMs);
 
   try {
-    await globalThis.fetch(url, {
-      method: preset.method || "POST",
-      headers: templateValue(preset.headers || { "Content-Type": "application/json" }, variables),
-      body: JSON.stringify(body),
+    const response = await globalThis.fetch(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+      signal: controller.signal,
     });
-    return true;
+    return Boolean(response?.ok);
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -131,6 +201,12 @@ export default function goalMatrixExtension(pi) {
 
       if (command === "templates") {
         notify(ctx, `Goal Matrix webhook presets: ${providerNames(config).join(", ") || "none"}.`, "info");
+        return;
+      }
+
+      if (command === "webhook-dry-run" || command === "dry-run" || command === "preview") {
+        const preview = previewWebhook(config, "session_start", "Goal Matrix webhook dry-run.");
+        notify(ctx, `Goal Matrix webhook dry-run: ${JSON.stringify(preview)}`, "info");
         return;
       }
 

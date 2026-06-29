@@ -1,0 +1,11 @@
+{
+  "name": "goal-matrix-iterative-delivery",
+  "version": "0.1.1+codex.20260629144053",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./pi-extension/index.js"
+    ]
+  }
+}

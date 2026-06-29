@@ -70,7 +70,8 @@ project initialization status -> active goal -> failing check -> minimal change 
 - Before push, squash or merge fragmented local commits into readable history unless the user asks to preserve them.
 - `PreToolUse` must run `goal_guard.py publish-gate` before `git push` so fragmented history fails closed.
 - If `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
-- Treat `loop-governance.json` as the machine gate source of truth; if `STATE.md` mentions governance policy, audit must flag drift from JSON.
+- Treat `loop-governance.json` as the machine gate source of truth; `STATE.md` must not repeat approval envs, protected paths, or publish patterns, and audit must flag `stateGovernanceDuplication` when it does.
+- Fast Lane is available only for trivial typo, copy, or single-function edits with no active goal; keep path/publish policy and focused verification, but skip goal-matrix checkpointing.
 - Final push needs final verification evidence and a clear branch/history state.
 
 ## Loop stage chain

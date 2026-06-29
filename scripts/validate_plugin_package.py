@@ -15,6 +15,7 @@ ADAPTERS = {
 }
 
 ASSETS = (
+    "package.json",
     "assets/icon.png",
     "pi-extension/index.js",
     "pi-extension/package.json",
@@ -72,10 +73,21 @@ def require_phrase(root, rel, phrase, errors):
 def validate(root):
     errors = []
     manifest = read_json(require_file(root, ".codex-plugin/plugin.json", errors), errors)
+    package = read_json(require_file(root, "package.json", errors), errors)
     hooks = manifest.get("hooks", "")
     skills = manifest.get("skills", "")
     if manifest.get("name") != "goal-matrix-iterative-delivery":
         errors.append("manifest name mismatch")
+    if package.get("name") != manifest.get("name"):
+        errors.append("package name must match manifest name")
+    if package.get("version") != manifest.get("version"):
+        errors.append("package version must match manifest version")
+    if package.get("type") != "module":
+        errors.append("package type must be module for pi-extension ESM loading")
+    if package.get("pi", {}).get("extensions") != ["./pi-extension/index.js"]:
+        errors.append("package pi.extensions must expose ./pi-extension/index.js")
+    if not (root / "pi-extension" / "index.js").is_file():
+        errors.append("package pi extension path missing: ./pi-extension/index.js")
     interface = manifest.get("interface", {})
     if interface.get("logo") != "./assets/icon.png":
         errors.append("manifest interface.logo mismatch")

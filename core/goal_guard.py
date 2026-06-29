@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 import argparse
+import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 
-TRIGGERS = (
-    "goal",
+NARROW_TRIGGER_PATTERNS = (
+    r"\bgoal[- ]?matrix\b",
+    r"\b(active|child)\s+goal\b",
+    r"目标矩阵|goal.*(矩阵|迭代)|迭代\s*goal",
+    r"\bcheckpoint\b|小步提交",
+    r"\b(verification|verify|verifier)\b|验证证据|truth[- ]source|真源",
+    r"\b(publish|push|squash|merge)\b|推送|压缩|合并",
+    r"loop[- ]engineering|循环工程|自动循环|自我进化|自进化|self[- ]evolution",
+    r"continuous iteration|连续迭代|迭代交付|single active slice|active slice",
+)
+
+STRICT_TRIGGER_PATTERNS = NARROW_TRIGGER_PATTERNS + (
+    r"\bgoal\b",
     "目标",
     "矩阵",
     "迭代",
@@ -95,6 +108,7 @@ PLUGIN_NAME = "goal-matrix-iterative-delivery"
 MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 ALLOW_FRAGMENTED_PUSH_ENV = "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH"
+DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 
 LOOP_CONTEXT = """Loop engineering:
 - Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
@@ -114,9 +128,9 @@ PHASE_BOUNDARIES = {
 }
 
 EVENT_CONTEXTS = {
-    "PreToolUse": "Before tool use: perform one loop step only; confirm active goal, policy impact, and write boundary before changes.",
-    "PostToolUse": "After tool use: record one loop step result; if it was verification, connect output to the active goal truth source.",
-    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Next loop: select next pending goal and continue with it before final completion, keep the active goal open with a concrete next action when prerequisites are recoverable, or state no remaining goal.",
+    "PreToolUse": "Before tool use: perform one loop step only; confirm active goal, policy impact, and write boundary before changes. Fast Lane: for a trivial typo, copy, or single-function edit with no active goal, keep only path/command policy plus a focused verification plan.",
+    "PostToolUse": "After tool use: record one loop step result; if it was verification, connect output to the active goal truth source. Fast Lane: for a trivial no active goal edit, connect the output to the focused verification instead of creating a checkpoint.",
+    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Fast Lane: a trivial no active goal edit may finish with focused verification and no goal checkpoint; protected paths, publish actions, unclear scope, or multi-file behavior changes leave Fast Lane. Next loop: select next pending goal and continue with it before final completion, keep the active goal open with a concrete next action when prerequisites are recoverable, or state no remaining goal.",
 }
 
 BASE_CONTEXT = """GOAL MATRIX DELIVERY ACTIVE
@@ -131,6 +145,7 @@ Execution discipline:
 Scope control:
 - Reuse existing routes, helpers, scripts, and tests first.
 - Ship one bounded child goal; defer speculative systems.
+- Fast Lane: for a trivial typo, copy, or single-function edit with no active goal, keep only path/command policy and focused verification; do not create a goal matrix checkpoint.
 - Prefer deletion, stdlib, and native platform behavior over new machinery.
 - New services, queues, schemas, config knobs, and abstractions need a current child-goal reason.
 
@@ -195,6 +210,7 @@ Lifecycle CLI:
 - goal_guard.py checkpoint: run a verification command before marking the active goal done.
 - goal_guard.py status: read initialization, active goal, next loop, and loop stages.
 - goal_guard.py gate: return design, execute, checkpoint, or blocked from gate evidence.
+- goal_guard.py policy-gate: reject tool calls that violate project policy.
 - goal_guard.py publish-gate: reject publish actions with fragmented local history.
 - goal_guard.py audit: validate policy, required docs, active-goal fields, and completion evidence.
 """
@@ -239,9 +255,27 @@ def prompt_text(raw):
     return str(data.get("prompt", ""))
 
 
-def wants_goal_guard(prompt):
+def read_project_policy(root):
+    policy_path = Path(root) / ".goal-matrix" / "project-policy.json"
+    if not policy_path.is_file():
+        return {}
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return policy if isinstance(policy, dict) else {}
+
+
+def strict_triggering_enabled(root):
+    policy = read_project_policy(root)
+    trigger_mode = str(policy.get("triggerMode", "")).lower()
+    return policy.get("strictMode") is True or trigger_mode == "strict"
+
+
+def wants_goal_guard(prompt, root=None):
     lowered = prompt.lower()
-    return any(token in lowered for token in TRIGGERS)
+    patterns = STRICT_TRIGGER_PATTERNS if root is not None and strict_triggering_enabled(root) else NARROW_TRIGGER_PATTERNS
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def classify_loop_phase(prompt):
@@ -383,6 +417,12 @@ def audit_project(root):
     if policy.get("initializationType") not in INITIALIZATION_TYPES:
         problems.append("invalid project policy initializationType")
 
+    trigger_mode = policy.get("triggerMode", "narrow")
+    if trigger_mode not in ("narrow", "strict"):
+        problems.append("invalid project policy triggerMode: expected narrow or strict")
+    if "strictMode" in policy and not isinstance(policy.get("strictMode"), bool):
+        problems.append("invalid project policy strictMode: expected boolean")
+
     for field in POLICY_LIST_FIELDS:
         values = policy.get(field)
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
@@ -430,7 +470,7 @@ def ensure_gitignore_lines(root):
     return changed
 
 
-def init_project(root, initialization_type):
+def ensure_project_baseline(root, initialization_type):
     root = Path(root)
     matrix_dir = root / ".goal-matrix"
     template_dir = Path(__file__).resolve().parent / "templates"
@@ -465,6 +505,11 @@ def init_project(root, initialization_type):
         skipped.append(".gitignore notification ignore")
 
     problems = audit_project(root)
+    return created, skipped, problems
+
+
+def init_project(root, initialization_type):
+    created, skipped, problems = ensure_project_baseline(root, initialization_type)
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)
@@ -494,8 +539,47 @@ def read_active_goal(root):
     return None
 
 
+def fast_lane_available(root):
+    active_path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
+    return active_path.is_file() and read_active_goal(root) is None
+
+
 def active_goal_id(active_goal):
     return active_goal.split(" - ", 1)[0] if active_goal else None
+
+
+def markdown_table_cell(value):
+    return " ".join(str(value).splitlines()).replace("\\", "\\\\").replace("|", "\\|")
+
+
+def markdown_table_row(cells):
+    return "| " + " | ".join(markdown_table_cell(cell) for cell in cells) + " |"
+
+
+def split_markdown_table_row(line):
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    cells = []
+    current = []
+    escaped = False
+    for char in text:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if escaped:
+        current.append("\\")
+    cells.append("".join(current).strip())
+    return cells
 
 
 def read_goal_matrix(root):
@@ -504,7 +588,7 @@ def read_goal_matrix(root):
         return []
     goals = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        cells = split_markdown_table_row(line)
         if len(cells) < 6 or cells[0] in ("Goal", "---"):
             continue
         goals.append(
@@ -610,10 +694,16 @@ def append_goal_matrix_row(path, goal_id, title):
     text = "\n".join(line for line in text.splitlines() if line.strip() != placeholder) + "\n"
     if not text.endswith("\n"):
         text += "\n"
-    text += (
-        f"| {goal_id} | {title} | Start one bounded child goal | "
-        "`.goal-matrix` status | `python3 core/goal_guard.py status --root .` | Pending |\n"
-    )
+    text += markdown_table_row(
+        [
+            goal_id,
+            title,
+            "Start one bounded child goal",
+            "`.goal-matrix` status",
+            "`python3 core/goal_guard.py status --root .`",
+            "Pending",
+        ]
+    ) + "\n"
     path.write_text(text, encoding="utf-8")
 
 
@@ -697,18 +787,49 @@ def mark_goal_done(root, goal_id):
     lines = path.read_text(encoding="utf-8").splitlines()
     updated = []
     for line in lines:
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        cells = split_markdown_table_row(line)
         if len(cells) >= 6 and cells[0] == goal_id:
             cells[5] = "Done"
-            line = "| " + " | ".join(cells[:6]) + " |"
+            line = markdown_table_row(cells[:6])
         updated.append(line)
     path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+
+
+def is_metadata_only_verification(verify_command):
+    for index, arg in enumerate(verify_command[:-1]):
+        if Path(str(arg)).name == "goal_guard.py" and verify_command[index + 1] == "status":
+            return True
+    return False
+
+
+def write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result):
+    path = Path(root) / ".goal-matrix" / "evidence" / f"{goal_id}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                f"Goal: {active_goal}",
+                f"Command: {shlex.join(map(str, verify_command))}",
+                f"Exit code: {result.returncode}",
+                "Stdout:",
+                result.stdout.rstrip(),
+                "Stderr:",
+                result.stderr.rstrip(),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def checkpoint_project(root, verify_command, if_active=False):
     root = Path(root)
     if not verify_command:
         print("missing verification command after --", file=sys.stderr)
+        return 2
+    if is_metadata_only_verification(verify_command):
+        print("metadata-only verification command is not allowed for checkpoint", file=sys.stderr)
         return 2
     active_goal = read_active_goal(root)
     if not active_goal or (if_active and not has_pending_active_goal(read_goal_matrix(root), active_goal)):
@@ -726,6 +847,7 @@ def checkpoint_project(root, verify_command, if_active=False):
         return result.returncode
 
     goal_id = active_goal_id(active_goal)
+    evidence_path = write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result)
     mark_goal_done(root, goal_id)
     next_goal = first_pending_goal(read_goal_matrix(root))
     next_active_goal = None
@@ -736,7 +858,12 @@ def checkpoint_project(root, verify_command, if_active=False):
         write_active_goal_none(root)
     print(
         json.dumps(
-            {"completedGoal": active_goal, "nextActiveGoal": next_active_goal, "verification": verify_command},
+            {
+                "completedGoal": active_goal,
+                "nextActiveGoal": next_active_goal,
+                "verification": verify_command,
+                "evidence": str(evidence_path.relative_to(root)),
+            },
             ensure_ascii=False,
             indent=2,
         )
@@ -753,7 +880,18 @@ def toml_block_enabled(text, header):
     return bool(re.search(r"^\s*enabled\s*=\s*true\s*$", toml_block(text, header), re.MULTILINE))
 
 
-def doctor_project(root):
+def doctor_project(root, fix=False):
+    root = Path(root)
+    fix_result = {"applied": False, "created": [], "skipped": [], "problems": []}
+    if fix:
+        created, skipped, problems = ensure_project_baseline(root, "iteration")
+        fix_result = {
+            "applied": bool(created),
+            "created": created,
+            "skipped": skipped,
+            "problems": problems,
+        }
+
     plugin_root = Path(__file__).resolve().parents[1]
     manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
@@ -797,7 +935,25 @@ def doctor_project(root):
         "hookCanCreateCodexGoal": False,
         "minimalFixPath": "load the plugin marketplace/cache for hooks, then call Codex create_goal for visible goals",
     }
-    print(json.dumps({"resume": status_payload(root), "source": source, "runtime": runtime}, ensure_ascii=False, indent=2))
+    pre_push = root / ".git" / "hooks" / "pre-push"
+    native_hooks = {
+        "prePushHookPath": str(pre_push),
+        "prePushHookInstalled": pre_push.is_file(),
+        "installCommand": f"python3 scripts/install_adapter.py codex --target {shlex.quote(str(root))} --install-git-hook",
+    }
+    print(
+        json.dumps(
+            {
+                "resume": status_payload(root),
+                "source": source,
+                "runtime": runtime,
+                "nativeHooks": native_hooks,
+                "fix": fix_result,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -813,11 +969,185 @@ def truthy_env(name):
     return os.environ.get(name, "").lower() in {"1", "true", "yes", "approved"}
 
 
+def truthy_value(value):
+    return str(value).lower() in {"1", "true", "yes", "approved"}
+
+
+def hook_payload_data(raw):
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def path_field_hint(key):
+    lowered = key.lower()
+    return any(token in lowered for token in ("path", "file", "dir", "target", "source", "destination"))
+
+
+def command_field_hint(key):
+    lowered = key.lower()
+    return lowered in {"cmd", "command", "shell", "script"} or lowered.endswith("_cmd")
+
+
+def normalize_policy_path(root, value):
+    text = str(value).strip().strip("'\"")
+    if not text or "\n" in text:
+        return ""
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(Path(root).resolve()).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix().lstrip("./")
+
+
+def collect_payload_paths(raw, root):
+    data = hook_payload_data(raw)
+    paths = set()
+
+    def add_path(value):
+        normalized = normalize_policy_path(root, value)
+        if normalized:
+            paths.add(normalized)
+
+    def walk(value, key=""):
+        if isinstance(value, str):
+            for match in re.finditer(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", value, re.MULTILINE):
+                add_path(match.group(1))
+            if path_field_hint(key):
+                add_path(value)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, key)
+        elif isinstance(value, dict):
+            for child_key, item in value.items():
+                walk(item, str(child_key))
+
+    walk(data)
+    return sorted(paths)
+
+
+def collect_payload_commands(raw):
+    data = hook_payload_data(raw)
+    commands = []
+
+    def walk(value, key=""):
+        if isinstance(value, str) and command_field_hint(key):
+            commands.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, key)
+        elif isinstance(value, dict):
+            for child_key, item in value.items():
+                walk(item, str(child_key))
+
+    if isinstance(data, str):
+        commands.append(data)
+    else:
+        walk(data)
+    return commands
+
+
+def payload_has_approval(raw):
+    data = hook_payload_data(raw)
+
+    def walk(value, key=""):
+        if key.lower() in {"approvaltoken", "approval_token", "approval"} and truthy_value(value):
+            return True
+        if isinstance(value, list):
+            return any(walk(item, key) for item in value)
+        if isinstance(value, dict):
+            return any(walk(item, str(child_key)) for child_key, item in value.items())
+        return False
+
+    return walk(data)
+
+
+def policy_path_matches(path, patterns):
+    return any(
+        fnmatch.fnmatch(path, pattern)
+        or fnmatch.fnmatch(f"./{path}", pattern)
+        or path == pattern.rstrip("/")
+        or path.startswith(pattern.rstrip("/") + "/")
+        for pattern in patterns
+    )
+
+
+def protected_command_matches(command, protected):
+    command_lower = command.lower()
+    protected_lower = protected.lower().strip()
+    if not protected_lower:
+        return False
+    if re.search(r"\s", protected_lower):
+        return protected_lower in command_lower
+    return bool(re.search(rf"(^|[\s;&|()]){re.escape(protected_lower)}($|[\s;&|()])", command_lower))
+
+
+def policy_gate_problems(root, raw):
+    root = Path(root)
+    policy = read_project_policy(root)
+    if not policy:
+        return []
+
+    approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)) or payload_has_approval(raw)
+    problems = []
+    paths = collect_payload_paths(raw, root)
+    for path in paths:
+        if policy_path_matches(path, policy.get("immutablePaths", [])):
+            problems.append(f"immutable path: {path}")
+        if policy_path_matches(path, policy.get("approvalRequiredPaths", [])) and not approved:
+            problems.append(f"{path} requires approval via {policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)}")
+
+    for command in collect_payload_commands(raw):
+        for protected in policy.get("protectedCommands", []):
+            if protected_command_matches(command, protected):
+                problems.append(f"protected command: {protected}")
+
+    return problems
+
+
+def policy_gate(root, hook_mode=False):
+    raw = sys.stdin.read()
+    if hook_mode and not raw.strip():
+        return 0
+    problems = policy_gate_problems(root, raw)
+    for problem in problems:
+        print(f"policy gate blocked: {problem}", file=sys.stderr)
+    return 1 if problems else 0
+
+
 def current_branch(root):
     result = git_output(root, "branch", "--show-current")
     if result.returncode:
         return ""
     return result.stdout.strip()
+
+
+def publish_state_problems(root):
+    problems = []
+    dirty = git_output(root, "status", "--porcelain")
+    if dirty.returncode or dirty.stdout.strip():
+        problems.append("uncommitted changes present; commit, stash, or discard them before push")
+
+    goals = read_goal_matrix(root)
+    if not goals:
+        return problems
+
+    active_goal = read_active_goal(root)
+    if active_goal:
+        problems.append(f"active goal still open: {active_goal}")
+
+    done_goals = [goal for goal in goals if goal["status"].lower() == "done"]
+    if done_goals:
+        latest_done = done_goals[-1]["id"]
+        evidence = Path(root) / ".goal-matrix" / "evidence" / f"{latest_done}.log"
+        if not evidence.is_file():
+            problems.append(f"missing checkpoint evidence: {evidence.relative_to(root)}")
+    return problems
 
 
 def git_ref_exists(root, ref):
@@ -892,7 +1222,7 @@ def publish_gate(root, hook_mode=False):
     ahead_text, behind_text = counts.stdout.split()[:2]
     ahead = int(ahead_text)
     behind = int(behind_text)
-    problems = []
+    problems = publish_state_problems(root)
     if behind:
         problems.append(f"remote history not integrated: {behind} commit(s) behind {base_ref}")
     if ahead > 1:
@@ -918,8 +1248,15 @@ def gate_decision(phase, text, verify_command=None, root="."):
     has_truth = "truth source:" in lowered
     has_verification_plan = "verification:" in lowered
     has_verification_evidence = re.search(r"verified with|verified:|tests? pass|build pass|验证.*(通过|pass)", lowered)
-    review_changes = re.search(r"reviewer:\s*(changes requested|requested changes|fail|failed|reject)", lowered)
-    review_approved = re.search(r"reviewer:\s*(approved|pass|passed|ok)", lowered)
+    reviewer_values = re.findall(r"^reviewer:\s*(.+)$", lowered, re.MULTILINE)
+    review_changes = any(
+        re.search(r"\b(changes requested|requested changes|fail|failed|reject)\b", value)
+        for value in reviewer_values
+    )
+    review_approved = any(
+        re.search(r"\b(approved|pass|passed|ok)\b", value)
+        for value in reviewer_values
+    )
 
     if phase == "design_gate":
         if not has_clarity:
@@ -931,6 +1268,8 @@ def gate_decision(phase, text, verify_command=None, root="."):
     if phase == "review_gate":
         if review_changes:
             return emit_gate("execute", "review requested changes")
+        if fast_lane_available(root) and not review_approved:
+            return emit_gate("checkpoint", "Fast Lane: no active goal; require focused verification, not goal checkpoint")
         if review_approved:
             if not verify_command:
                 return emit_gate("execute", "missing machine verification command")
@@ -1021,7 +1360,7 @@ def hook(event):
 
     if event == "UserPromptSubmit":
         prompt = prompt_from_stdin()
-        if wants_goal_guard(prompt):
+        if wants_goal_guard(prompt, Path.cwd()):
             emit(event, PROMPT_CONTEXT + phase_context(prompt) + project_status_context(Path.cwd()))
         return 0
 
@@ -1052,9 +1391,13 @@ def main():
     status_parser.add_argument("--root", default=".")
     doctor_parser = sub.add_parser("doctor")
     doctor_parser.add_argument("--root", default=".")
+    doctor_parser.add_argument("--fix", action="store_true")
     publish_gate_parser = sub.add_parser("publish-gate")
     publish_gate_parser.add_argument("--root", default=".")
     publish_gate_parser.add_argument("--hook", action="store_true")
+    policy_gate_parser = sub.add_parser("policy-gate")
+    policy_gate_parser.add_argument("--root", default=".")
+    policy_gate_parser.add_argument("--hook", action="store_true")
     gate_parser = sub.add_parser("gate")
     gate_parser.add_argument("--phase", choices=("design_gate", "review_gate"), required=True)
     gate_parser.add_argument("--root", default=".")
@@ -1075,9 +1418,11 @@ def main():
     if args.cmd == "status":
         return status_project(args.root)
     if args.cmd == "doctor":
-        return doctor_project(args.root)
+        return doctor_project(args.root, args.fix)
     if args.cmd == "publish-gate":
         return publish_gate(args.root, args.hook)
+    if args.cmd == "policy-gate":
+        return policy_gate(args.root, args.hook)
     if args.cmd == "gate":
         verify_command = args.verify[1:] if args.verify and args.verify[:1] == ["--"] else args.verify
         return gate_decision(args.phase, gate_input(args.root, args.file), verify_command, args.root)

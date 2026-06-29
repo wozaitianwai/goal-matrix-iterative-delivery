@@ -21,6 +21,8 @@ LEVELS = {
 
 RUN_LOG_LINE_LIMIT = 500
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
+GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
+MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")
 
 
 def has_phrases(root, rel, phrases):
@@ -124,23 +126,37 @@ def load_governance_policy(root):
     return policy if isinstance(policy, dict) else {}
 
 
-def state_governance_approval_env(root):
+def policy_string_values(value):
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        values = []
+        for item in value:
+            values.extend(policy_string_values(item))
+        return values
+    if isinstance(value, dict):
+        values = []
+        for item in value.values():
+            values.extend(policy_string_values(item))
+        return values
+    return []
+
+
+def state_governance_machine_values(root, policy):
     path = root / "STATE.md"
     if not path.is_file():
-        return None
+        return []
+    policy_values = sorted(set(policy_string_values(policy)), key=len, reverse=True)
+    machine_values = set()
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         lowered = line.lower()
-        if "governance" not in lowered or "approval" not in lowered:
+        if not any(hint in lowered for hint in GOVERNANCE_STATE_HINTS):
             continue
-        match = re.search(r"\b[A-Z][A-Z0-9_]*APPROVED[A-Z0-9_]*\b", line)
-        return match.group(0) if match else ""
-    return None
-
-
-def governance_state_envs(root):
-    policy = load_governance_policy(root)
-    policy_env = policy.get("approvalEnv", DEFAULT_APPROVAL_ENV) if policy else ""
-    return state_governance_approval_env(root), policy_env
+        for value in policy_values:
+            if value in line:
+                machine_values.add(value)
+        machine_values.update(MACHINE_ENV_RE.findall(line))
+    return sorted(machine_values)
 
 
 def audit(root):
@@ -165,12 +181,12 @@ def audit(root):
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
     run_log_lines = run_log_line_count(root)
     signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
-    state_approval_env, policy_approval_env = governance_state_envs(root)
-    signals["stateGovernanceDrift"] = (
-        state_approval_env is not None
-        and bool(policy_approval_env)
-        and state_approval_env != policy_approval_env
-    )
+    governance_policy = load_governance_policy(root)
+    policy_approval_env = governance_policy.get("approvalEnv", DEFAULT_APPROVAL_ENV) if governance_policy else ""
+    state_machine_values = state_governance_machine_values(root, governance_policy)
+    state_approval_env = next((value for value in state_machine_values if "APPROV" in value), None)
+    signals["stateGovernanceDuplication"] = bool(state_machine_values)
+    signals["stateGovernanceDrift"] = signals["stateGovernanceDuplication"]
 
     score = 10
     score += 18 if signals["stateFile"] else 0
@@ -218,9 +234,9 @@ def audit(root):
             f"loop-run-log.md exceeds {RUN_LOG_LINE_LIMIT} lines; run a summary/pruning goal before continuing."
         )
         recommendations.append("Summarize or prune loop-run-log.md before the next long loop.")
-    if signals["stateGovernanceDrift"]:
-        blocked.append("STATE.md governance approval env drifts from loop-governance.json.")
-        recommendations.append("Treat loop-governance.json as the machine gate source and update STATE.md to match.")
+    if signals["stateGovernanceDuplication"]:
+        blocked.append("STATE.md repeats machine governance values from loop-governance.json.")
+        recommendations.append("Keep machine-owned governance values only in loop-governance.json; keep STATE.md human-only.")
 
     assessment = {
         "L0": "Loop spine incomplete.",
@@ -246,6 +262,7 @@ def audit(root):
         "runLogLineCount": run_log_lines,
         "runLogLineLimit": RUN_LOG_LINE_LIMIT,
         "stateGovernanceApprovalEnv": state_approval_env,
+        "stateGovernanceMachineValues": state_machine_values,
         "governanceApprovalEnv": policy_approval_env,
         "assessment": assessment,
         "signals": signals,

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from pathlib import Path
 ROOT = Path(os.environ.get("GOAL_MATRIX_VERIFY_ROOT", Path.cwd())).resolve()
 CACHE_ROOT = Path(tempfile.gettempdir()) / "goal-matrix-pycache"
 ENV = {"PYTHONPYCACHEPREFIX": str(CACHE_ROOT)}
+DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 
 CHECKS = (
     ("loop audit", [sys.executable, "scripts/loop_audit.py", "--root", ".", "--json"]),
@@ -35,10 +37,25 @@ CHECKS = (
 )
 
 
+def approval_env_name():
+    try:
+        policy = json.loads((ROOT / "loop-governance.json").read_text(encoding="utf-8"))
+    except Exception:
+        return DEFAULT_APPROVAL_ENV
+    return policy.get("approvalEnv") or DEFAULT_APPROVAL_ENV
+
+
+def command_env(name):
+    env = {**os.environ, **ENV}
+    if name != "governance":
+        env.pop(approval_env_name(), None)
+    return env
+
+
 def main():
     for name, command in CHECKS:
         print(f"==> {name}", flush=True)
-        result = subprocess.run(command, cwd=ROOT, env={**os.environ, **ENV})
+        result = subprocess.run(command, cwd=ROOT, env=command_env(name))
         if result.returncode:
             return result.returncode
     return 0

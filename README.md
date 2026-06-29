@@ -24,9 +24,11 @@ Use it when a request is too broad for a single edit and you need the agent to k
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref main
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.1-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
+
+Use a tagged release for reproducible installs. The moving development branch is only for unreleased testing.
 
 Then trust the plugin hooks in Codex Desktop and restart Codex once so the lifecycle hooks load.
 
@@ -56,7 +58,9 @@ python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 
 `scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
 
-`loop-governance.json` is the machine gate source for approval and publish policy. `STATE.md` is the human-readable view, and audit reports drift when the governance env names disagree.
+`loop-governance.json` is the machine gate source for approval and publish policy. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
+
+Fast Lane is available when there is no active goal and the request is a trivial typo, copy, or single-function edit. It keeps policy/publish gates and focused verification, but skips goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes use the normal loop.
 
 The loop is deliberately small:
 
@@ -73,6 +77,8 @@ Project initialization also creates optional notification settings. Enable them 
 /goal-notify test
 /goal-notify templates
 ```
+
+The command is loaded from the packaged `pi.extensions` entry and uses Codex `ctx.ui.notify`; it is not a hook log or chat-message notification.
 
 Webhook presets are included for generic, Slack, Discord, Feishu, DingTalk, and WeChat Work payload shapes. Enable webhook delivery in the project config and put real webhook secrets in the local notification file or `GOAL_MATRIX_WEBHOOK_URL`; the local file is added to `.gitignore`.
 
@@ -93,7 +99,7 @@ python3 core/goal_guard.py publish-gate --root .
 
 It fails when the branch has more than one local commit ahead of its upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` when the user explicitly wants to preserve the history.
 
-The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy.
+The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy. If a hook already exists, it is chained from `.git/hooks/pre-push.goal-matrix.previous`; restore it by moving that file back to `.git/hooks/pre-push`.
 
 ## Package Checks
 

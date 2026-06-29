@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import goalMatrixExtension from "../index.js";
+import goalMatrixExtension, { previewWebhook, sendWebhook } from "../index.js";
 
 function createHarness() {
   const events = new Map();
@@ -147,8 +147,148 @@ test("enabled webhook notification sends provider payload without chat", async (
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, "https://example.invalid/webhook");
   assert.equal(fetchCalls[0].options.method, "POST");
+  assert.ok(fetchCalls[0].options.signal);
   assert.deepEqual(JSON.parse(fetchCalls[0].options.body), {
     content: "Goal Matrix notifications enabled for this project.",
     event: "session_start",
   });
+});
+
+test("webhook rejects non-https URLs before fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    const sent = await sendWebhook(
+      {
+        enabled: true,
+        webhook: { enabled: true, events: ["session_start"], url: "http://example.invalid/webhook" },
+      },
+      "session_start",
+      "message",
+    );
+
+    assert.equal(sent, false);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("webhook enforces allowed host list", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    const sent = await sendWebhook(
+      {
+        enabled: true,
+        webhook: {
+          enabled: true,
+          events: ["session_start"],
+          url: "https://evil.invalid/webhook",
+          allowedHosts: ["example.invalid"],
+        },
+      },
+      "session_start",
+      "message",
+    );
+
+    assert.equal(sent, false);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("webhook reports non-ok responses as failed", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    assert.ok(options.signal);
+    return { ok: false, status: 500 };
+  };
+
+  try {
+    const sent = await sendWebhook(
+      {
+        enabled: true,
+        webhook: { enabled: true, events: ["session_start"], url: "https://example.invalid/webhook" },
+      },
+      "session_start",
+      "message",
+    );
+
+    assert.equal(sent, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("webhook preview is dry-run and uses whitelisted event fields", () => {
+  const preview = previewWebhook(
+    {
+      enabled: true,
+      webhook: {
+        enabled: true,
+        events: ["session_start"],
+        provider: "generic",
+        url: "https://example.invalid/webhook?token=secret",
+        eventFields: ["event", "provider"],
+        presets: {
+          generic: {
+            method: "POST",
+            headers: { "X-Event": "{{event}}", "X-Message": "{{message}}" },
+            body: { event: "{{event}}", provider: "{{provider}}", message: "{{message}}", secret: "{{secret}}" },
+          },
+        },
+      },
+    },
+    "session_start",
+    "message",
+  );
+
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.url, "https://example.invalid/webhook?redacted=1");
+  assert.deepEqual(preview.headers, { "X-Event": "session_start", "X-Message": "" });
+  assert.deepEqual(preview.body, { event: "session_start", provider: "generic", message: "", secret: "" });
+});
+
+test("/goal-notify webhook-dry-run previews without fetch", async () => {
+  const root = tempProject({
+    enabled: true,
+    webhook: {
+      enabled: true,
+      events: ["session_start"],
+      url: "https://example.invalid/webhook",
+      presets: { generic: { body: { text: "{{message}}" } } },
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  const notifications = [];
+  const { commands } = createHarness();
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    await commands.get("goal-notify").handler("webhook-dry-run", notifyContext(root, notifications));
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(fetchCalled, false);
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /webhook dry-run/);
+  assert.match(notifications[0].message, /session_start/);
 });

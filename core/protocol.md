@@ -116,7 +116,9 @@ Use small local checkpoint commits after verified child goals. Before pushing, s
 
 Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
 
-Treat `loop-governance.json` as the machine gate source of truth for approval and publish policy. `STATE.md` is the human-readable view; if it mentions governance policy, `scripts/loop_audit.py` must flag drift from the JSON policy.
+Treat `loop-governance.json` as the machine gate source of truth for approval and publish policy. `STATE.md` is human-readable only and must not repeat approval envs, protected paths, or publish patterns. If human state copies machine-owned policy values, `scripts/loop_audit.py` must flag `stateGovernanceDuplication`.
+
+Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
 
 A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
 

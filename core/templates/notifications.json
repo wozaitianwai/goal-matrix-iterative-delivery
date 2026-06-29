@@ -15,6 +15,11 @@
     ],
     "provider": "generic",
     "urlEnv": "GOAL_MATRIX_WEBHOOK_URL",
+    "eventFields": [
+      "event",
+      "message",
+      "provider"
+    ],
     "presets": {
       "generic": {
         "method": "POST",

@@ -2499,6 +2499,39 @@ def test_start_command_extracts_prompt_from_hook_json():
     assert json.loads(started.stdout)["activeGoal"] == "G1 - goal matrix 工程化"
 
 
+def test_start_broad_prompt_creates_pending_matrix_before_dispatch():
+    prompt = """全部完成:
+P1 UserPromptSubmit auto-start writes state too eagerly
+P1 policy gate payload parsing heuristic
+P2 Markdown canonical state
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], prompt)
+        status_result = run_guard(["status", "--root", tmp])
+        matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
+        active_text = (root / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
+
+    assert started.returncode == 0, started.stderr
+    payload = json.loads(started.stdout)
+    assert payload["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert payload["plannedChildGoals"] == ["G2", "G3", "G4"]
+
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert status["nextLoop"] == "G2 - UserPromptSubmit auto-start writes state too eagerly"
+    assert status["goalMatrix"]["total"] == 4
+    assert status["goalMatrix"]["pending"] == 4
+    assert status["goalMatrix"]["childGoals"][1]["dependencies"] == "G1"
+    assert status["goalMatrix"]["childGoals"][1]["risk"] == "P1"
+    assert status["goalMatrix"]["childGoals"][1]["parallelSafety"] == "independent if touched paths do not overlap"
+    assert "| Dependencies | Risk | Parallel safety | Status |" in matrix_text
+    assert "scheduler/acceptance active goal" in active_text
+    assert "verify each child goal before checkpoint" in active_text
+
+
 def test_start_command_escapes_pipe_in_prompt_title():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

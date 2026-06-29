@@ -56,6 +56,8 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
+遇到 broad review/backlog prompt 时，`start` 会先创建一个调度/验收 active goal，再创建多个 Pending child goals。child row 会带 dependency、risk 和 parallel-safety 元数据；主线程仍然逐个真实验证、逐个 checkpoint。
+
 `scripts/loop_audit.py --json` 会在 `loop-run-log.md` 超过 500 行时报告 `runLogNeedsSummary`；继续长期循环前先执行 summary/pruning 子目标。
 
 `.goal-matrix/project-policy.json` 是目标项目运行时 policy 真源，负责 path、command 和 publish-action gate。`loop-governance.json` 只用于插件仓库自治，也就是本仓库自己的 CI/static governance 检查。`STATE.md` 只做人读视图，不重复 approval env、受保护路径或 publish pattern。人读状态复制机器 policy 值时，audit 会报告 `stateGovernanceDuplication`。

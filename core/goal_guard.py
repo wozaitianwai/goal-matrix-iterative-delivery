@@ -617,16 +617,17 @@ def read_goal_matrix(root):
         cells = split_markdown_table_row(line)
         if len(cells) < 6 or cells[0] in ("Goal", "---"):
             continue
-        goals.append(
-            {
-                "id": cells[0],
-                "userOutcome": cells[1],
-                "engineeringSlice": cells[2],
-                "truthSource": cells[3],
-                "verification": cells[4],
-                "status": cells[5],
-            }
-        )
+        goal = {
+            "id": cells[0],
+            "userOutcome": cells[1],
+            "engineeringSlice": cells[2],
+            "truthSource": cells[3],
+            "verification": cells[4],
+            "status": cells[8] if len(cells) >= 9 else cells[5],
+        }
+        if len(cells) >= 9:
+            goal.update({"dependencies": cells[5], "risk": cells[6], "parallelSafety": cells[7]})
+        goals.append(goal)
     return goals
 
 
@@ -708,29 +709,69 @@ def first_prompt_line(text):
     return "Start next goal"
 
 
-def append_goal_matrix_row(path, goal_id, title):
+GOAL_MATRIX_HEADER = "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |"
+GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- |"
+EXTENDED_GOAL_MATRIX_HEADER = (
+    "| Goal | User outcome | Engineering slice | Truth source | Verification | Dependencies | Risk | Parallel safety | Status |"
+)
+EXTENDED_GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+
+
+def goal_matrix_text_with_header(text, extended=False):
+    header = EXTENDED_GOAL_MATRIX_HEADER if extended else GOAL_MATRIX_HEADER
+    separator = EXTENDED_GOAL_MATRIX_SEPARATOR if extended else GOAL_MATRIX_SEPARATOR
+    if GOAL_MATRIX_HEADER not in text and EXTENDED_GOAL_MATRIX_HEADER not in text:
+        return f"# Goal Matrix\n\n{header}\n{separator}\n"
+    if extended and EXTENDED_GOAL_MATRIX_HEADER not in text:
+        text = text.replace(GOAL_MATRIX_HEADER, EXTENDED_GOAL_MATRIX_HEADER, 1)
+        text = text.replace(GOAL_MATRIX_SEPARATOR, EXTENDED_GOAL_MATRIX_SEPARATOR, 1)
+    return text
+
+
+def append_goal_matrix_row(
+    path,
+    goal_id,
+    title,
+    engineering_slice="Start one bounded child goal",
+    truth_source="`.goal-matrix` status",
+    verification="`python3 core/goal_guard.py status --root .`",
+    dependencies=None,
+    risk=None,
+    parallel_safety=None,
+):
     text = path.read_text(encoding="utf-8") if path.is_file() else "# Goal Matrix\n\n"
-    if "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |" not in text:
-        text = (
-            "# Goal Matrix\n\n"
-            "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |\n"
-            "| --- | --- | --- | --- | --- | --- |\n"
-        )
+    extended = dependencies is not None or risk is not None or parallel_safety is not None
+    text = goal_matrix_text_with_header(text, extended)
     placeholder = "| G0 | Initialize project governance | Create `.goal-matrix` baseline | Policy/docs | Audit passes | Pending |"
     text = "\n".join(line for line in text.splitlines() if line.strip() != placeholder) + "\n"
     if not text.endswith("\n"):
         text += "\n"
-    text += markdown_table_row(
-        [
-            goal_id,
-            title,
-            "Start one bounded child goal",
-            "`.goal-matrix` status",
-            "`python3 core/goal_guard.py status --root .`",
-            "Pending",
-        ]
-    ) + "\n"
+    cells = [goal_id, title, engineering_slice, truth_source, verification]
+    if extended:
+        cells.extend([dependencies or "none", risk or "medium", parallel_safety or "main thread only"])
+    cells.append("Pending")
+    text += markdown_table_row(cells) + "\n"
     path.write_text(text, encoding="utf-8")
+
+
+def broad_prompt_items(prompt):
+    items = []
+    for line in prompt_text(prompt).splitlines():
+        line = line.strip()
+        if not line or line.endswith(":"):
+            continue
+        line = re.sub(r"^[-*]\s+", "", line)
+        line = re.sub(r"^\d+[.)]\s+", "", line)
+        match = re.match(r"^(P[0-2])\s*[:：-]?\s*(.+)$", line, re.IGNORECASE)
+        if match:
+            risk, title = match.groups()
+            items.append({"title": title.strip()[:80], "risk": risk.upper()})
+    return items if len(items) >= 2 else []
+
+
+def goal_id_after(goal_id, offset):
+    match = re.match(r"G(\d+)$", goal_id)
+    return f"G{int(match.group(1)) + offset}" if match else f"{goal_id}.{offset}"
 
 
 def start_project(root, prompt):
@@ -749,6 +790,53 @@ def start_project(root, prompt):
         return 0
 
     goal_id = next_goal_id(goals)
+    items = broad_prompt_items(prompt)
+    if items:
+        active_goal = f"{goal_id} - Schedule broad prompt delivery"
+        append_goal_matrix_row(
+            goals_dir / "goal-matrix.md",
+            goal_id,
+            "Schedule broad prompt delivery",
+            "Classify dependency order and review child outputs before checkpoint",
+            "start command status readback",
+            "`python3 core/goal_guard.py status --root .`",
+            "none",
+            "medium",
+            "main thread only",
+        )
+        planned = []
+        for index, item in enumerate(items, start=1):
+            child_id = goal_id_after(goal_id, index)
+            planned.append(child_id)
+            append_goal_matrix_row(
+                goals_dir / "goal-matrix.md",
+                child_id,
+                item["title"],
+                f"Implement bounded item: {item['title']}",
+                "item-specific truth source",
+                "item-specific verification",
+                goal_id,
+                item["risk"],
+                "independent if touched paths do not overlap",
+            )
+        (goals_dir / "active-goal.md").write_text(
+            f"""# Active Goal
+
+Active goal: {active_goal}
+Initialization type: iteration
+Policy impact: none
+Touched paths: .goal-matrix/goals/goal-matrix.md, .goal-matrix/goals/active-goal.md
+Delivery boundary: scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint
+Skipped: subagent dispatch and child implementation
+Truth source: `.goal-matrix` status
+Verification: python3 core/goal_guard.py status --root .
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+            encoding="utf-8",
+        )
+        print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
+        return 0
+
     title = first_prompt_line(prompt)
     active_goal = f"{goal_id} - {title}"
 

@@ -56,6 +56,8 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
+For broad review/backlog prompts, `start` creates one scheduler/acceptance active goal plus multiple Pending child goals before implementation. Child rows include dependency, risk, and parallel-safety metadata; the main thread still verifies and checkpoints each child goal one at a time.
+
 `scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
 
 `.goal-matrix/project-policy.json` is the target project runtime policy source for path, command, and publish-action gates. `loop-governance.json` is only the plugin repository autonomy policy used by this repo's own CI/static governance checks. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.

@@ -1104,7 +1104,9 @@ def test_loop_verify_script_and_ci_share_one_gate():
         "Path.cwd()",
     ):
         assert phrase in text
-    assert "python3 scripts/loop_verify.py" in workflow.read_text(encoding="utf-8")
+    workflow_text = workflow.read_text(encoding="utf-8")
+    assert "GOAL_MATRIX_APPROVED: \"1\"" in workflow_text
+    assert "python3 scripts/loop_verify.py" in workflow_text
 
 
 def test_ci_workflow_lists_native_test_surfaces_explicitly():

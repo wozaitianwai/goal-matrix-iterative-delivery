@@ -535,12 +535,20 @@ def test_runtime_policy_source_docs_are_consistent():
 
 def test_release_install_docs_are_reproducible_and_changelog_backed():
     changelog = read_text("CHANGELOG.md")
+    tag_commit = subprocess.run(
+        ["git", "rev-parse", RELEASE_INSTALL_TAG],
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+    )
     for path in ("README.md", "README.zh.md", "adapters/codex/README.md"):
         text = read_text(path)
         assert f"--ref {RELEASE_INSTALL_TAG}" in text, path
         assert "--ref main" not in text, path
 
+    assert tag_commit.returncode == 0, tag_commit.stderr
     assert RELEASE_INSTALL_TAG in changelog
+    assert tag_commit.stdout.strip() in changelog
     assert "Release checklist" in changelog
     assert "Codex plugin marketplace" in changelog
 

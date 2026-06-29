@@ -4,6 +4,7 @@
 
 - Pin Codex plugin marketplace install instructions to `v0.1.1-codex.1` instead of a moving branch.
 - Document the release checklist needed before publishing an install ref.
+- Local tag readback: `v0.1.1-codex.1` resolves to commit `21498b349b29dcbc4bff726d9d4a393758afe201`.
 
 ### Release checklist
 

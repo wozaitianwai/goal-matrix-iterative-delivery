@@ -24,7 +24,7 @@ Use it when a request is too broad for a single edit and you need the agent to k
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.1-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.2-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 

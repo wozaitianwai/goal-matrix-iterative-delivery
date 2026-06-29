@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.2-codex.1 - 2026-06-29
+
+- Publish the static-review guardrail fixes under plugin version `0.1.2+codex.20260629215745`.
+- Pin Codex plugin marketplace install instructions to `v0.1.2-codex.1`.
+- Release readback will be recorded after the tag is created.
+
 ## v0.1.1-codex.1 - 2026-06-29
 
 - Pin Codex plugin marketplace install instructions to `v0.1.1-codex.1` instead of a moving branch.

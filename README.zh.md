@@ -114,7 +114,7 @@ python3 scripts/loop_verify.py
 
 ## 边界
 
-lifecycle hooks 只会给模型注入上下文，不会自己创建 Codex 侧边栏里的可见 goal。需要可见 goal 时，agent 必须显式调用 `create_goal`。
+lifecycle hooks 只会给模型注入上下文。UserPromptSubmit 不会运行 `start`，默认也不会写 `.goal-matrix` state；只有明确 start/checkpoint/create-goal 意图后才使用 `goal_guard.py start --root .`。hooks 也不会自己创建 Codex 侧边栏里的可见 goal。需要可见 goal 时，agent 必须显式调用 `create_goal`。
 
 这个包里只有 Codex lifecycle adapter。只有当仓库包含某个宿主的真实 hook wiring 时，才新增对应 adapter。
 

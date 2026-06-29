@@ -129,7 +129,7 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 | Hook | Phase boundary |
 | --- | --- |
 | `SessionStart` | Show project initialization status and loop policy. |
-| `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`. |
+| `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`; do not run `start` or write `.goal-matrix` state by default. UserPromptSubmit 不会运行 `start`。 |
 | `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block `git push` when publish history is fragmented. |
 | `PostToolUse` | Tie tool output back to the active goal truth source or next step. |
 | `Stop` | Require verification, checkpoint/status evidence, and push history policy before completion. |

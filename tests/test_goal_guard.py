@@ -1472,12 +1472,14 @@ def test_codex_hook_config_wires_loop_events():
 def test_codex_hook_config_invokes_lifecycle_commands():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     user_prompt_command = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
+    user_prompt_command_windows = hooks["UserPromptSubmit"][0]["hooks"][0]["commandWindows"]
     pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
     stop_command_windows = hooks["Stop"][0]["hooks"][0]["commandWindows"]
 
     assert " hook UserPromptSubmit" in user_prompt_command
-    assert " start --root ." in user_prompt_command
+    assert " start --root ." not in user_prompt_command
+    assert " start --root ." not in user_prompt_command_windows
     assert "CODEX_PLUGIN_ROOT" in user_prompt_command
     assert " policy-gate --root . --hook" in pre_tool_command
     assert " publish-gate --root . --hook" in pre_tool_command
@@ -1490,6 +1492,18 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
     assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
     assert " hook Stop" in stop_command
+
+
+def test_user_prompt_submit_does_not_auto_start_goal_state():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    hook = hooks["UserPromptSubmit"][0]["hooks"][0]
+    docs = "\n".join(read_text(path) for path in ("README.md", "README.zh.md", "core/protocol.md"))
+
+    assert "hook UserPromptSubmit" in hook["command"]
+    assert "start --root" not in hook["command"]
+    assert "start --root" not in hook["commandWindows"]
+    assert "UserPromptSubmit does not run `start`" in docs
+    assert "UserPromptSubmit 不会运行 `start`" in docs
 
 
 def test_active_verify_runs_target_active_goal_verification_command():

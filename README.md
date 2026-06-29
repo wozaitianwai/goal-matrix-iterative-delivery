@@ -114,7 +114,7 @@ This project is open source under the [MIT License](LICENSE). You may use, modif
 
 ## Boundaries
 
-Lifecycle hooks inject context into the model. They do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.
+Lifecycle hooks inject context into the model. UserPromptSubmit does not run `start` or write `.goal-matrix` state by default; use `goal_guard.py start --root .` only after explicit start/checkpoint/create-goal intent. Hooks also do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.
 
 Codex is the only lifecycle adapter in this package. Add another adapter only when this repo contains real hook wiring for that host.
 

@@ -1180,6 +1180,7 @@ def test_loop_verify_script_and_ci_share_one_gate():
         assert phrase in text
     workflow_text = workflow.read_text(encoding="utf-8")
     assert "GOAL_MATRIX_APPROVED" not in workflow_text
+    assert "fetch-tags: true" in workflow_text
     assert "python3 scripts/loop_verify.py" in workflow_text
 
 

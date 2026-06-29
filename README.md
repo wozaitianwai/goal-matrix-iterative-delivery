@@ -78,6 +78,10 @@ python3 scripts/validate_plugin_package.py --root .
 python3 scripts/loop_verify.py
 ```
 
+## Open Source
+
+This project is open source under the [MIT License](LICENSE). You may use, modify, and distribute it within that license.
+
 ## Boundaries
 
 Lifecycle hooks inject context into the model. They do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.

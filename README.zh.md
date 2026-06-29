@@ -78,6 +78,10 @@ python3 scripts/validate_plugin_package.py --root .
 python3 scripts/loop_verify.py
 ```
 
+## 开源声明
+
+本项目按 [MIT License](LICENSE) 开源。你可以在该许可证范围内使用、修改和分发。
+
 ## 边界
 
 lifecycle hooks 只会给模型注入上下文，不会自己创建 Codex 侧边栏里的可见 goal。需要可见 goal 时，agent 必须显式调用 `create_goal`。

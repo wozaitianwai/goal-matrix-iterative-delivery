@@ -804,6 +804,55 @@ def test_loop_audit_flags_state_governance_policy_duplication():
     assert any("STATE.md repeats machine governance values" in item for item in audit["blocked"])
 
 
+def test_loop_audit_flags_state_md_version_drift():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_file(
+            root / "STATE.md",
+            (
+                "Last run: now\n\n## High Priority\n\n"
+                "- Keep plugin cache current.\n\n"
+                "## Watch List\n\n"
+                "- Codex plugin cache refreshed to `0.1.0+codex.old`.\n"
+            ),
+        )
+        write_file(root / "package.json", json.dumps({"version": "0.1.1+codex.current"}) + "\n")
+        write_file(root / ".codex-plugin" / "plugin.json", json.dumps({"version": "0.1.1+codex.current"}) + "\n")
+        write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(
+            root / "LOOP.md",
+            "# Loop\n\n## Active Loops\npackage-triage\n\n## Human Gates\n## Budget\n",
+        )
+        write_file(root / "loop-run-log.md", "# Runs\n\n## Recent Runs\n{\"outcome\":\"local\"}\n")
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["stateVersionDrift"] is True
+    assert "0.1.0+codex.old" in audit["stateVersionMentions"]
+    assert any("STATE.md mentions stale plugin version" in item for item in audit["blocked"])
+
+
+def test_loop_audit_current_state_md_version_matches_manifest():
+    result = subprocess.run(
+        [sys.executable, str(LOOP_AUDIT), "--root", str(ROOT), "--json"],
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["repoVersions"]["package"] == audit["repoVersions"]["plugin"]
+    assert audit["signals"]["stateVersionDrift"] is False
+
+
 def make_governance_repo(root):
     subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
     subprocess.run(

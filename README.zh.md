@@ -40,6 +40,12 @@ python3 scripts/install_adapter.py codex --target /path/to/project
 
 这个命令只会在目标项目写入 `.goal-matrix/` 文件，不会修改 Codex 配置。
 
+如果还要约束 shell 或人工手动 push，可以安装原生 git hook：
+
+```bash
+python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
+```
+
 ## 日常循环
 
 ```bash
@@ -47,6 +53,10 @@ printf '修复下一个有边界的目标' | python3 core/goal_guard.py start --
 python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
+
+`scripts/loop_audit.py --json` 会在 `loop-run-log.md` 超过 500 行时报告 `runLogNeedsSummary`；继续长期循环前先执行 summary/pruning 子目标。
+
+`loop-governance.json` 是 approval 和 publish policy 的机器门禁真源。`STATE.md` 是人读视图；两边 governance env 名称不一致时 audit 会报告漂移。
 
 流程故意保持很小：
 
@@ -82,6 +92,8 @@ python3 core/goal_guard.py publish-gate --root .
 ```
 
 当分支相对 upstream 领先超过 1 个本地提交时会失败。先 squash 或 merge；只有用户明确要求保留碎历史时，才设置 `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` 放行。
+
+可选的原生 `pre-push` hook 运行同一个 gate，直接 shell push 也会走同一套策略。
 
 ## 插件检查
 

@@ -31,12 +31,34 @@ def sync_codex_global():
     return destination
 
 
-def install_project(tool, target, init_type):
+def install_native_pre_push_hook(target):
+    git_dir = target / ".git"
+    if not git_dir.is_dir():
+        raise SystemExit("--install-git-hook requires an initialized git repository")
+    hook = git_dir / "hooks" / "pre-push"
+    if hook.exists():
+        raise SystemExit(f"{hook} already exists; merge the publish gate manually")
+    hook.write_text(
+        f"""#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+python3 "{ROOT / "core" / "goal_guard.py"}" publish-gate --root "$repo_root"
+""",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    return hook
+
+
+def install_project(tool, target, init_type, install_git_hook=False):
     target.mkdir(parents=True, exist_ok=True)
     messages = []
     messages.append("codex project scope initializes .goal-matrix only; install the Codex plugin globally for hooks")
     rc = init_goal_matrix(target, init_type)
     messages.append(f"initialized .goal-matrix for {target}")
+    if install_git_hook:
+        hook = install_native_pre_push_hook(target)
+        messages.append(f"installed native pre-push hook at {hook}")
     print("\n".join(messages))
     return rc
 
@@ -47,6 +69,7 @@ def main():
     parser.add_argument("--scope", default="project", choices=("project", "global"), help="Install into one project or global Codex.")
     parser.add_argument("--target", help="Target project root. Required for --scope project.")
     parser.add_argument("--type", default="iteration", choices=("new-project", "iteration", "bugfix", "legacy-baseline"))
+    parser.add_argument("--install-git-hook", action="store_true", help="Also install a native git pre-push hook for publish-gate.")
     args = parser.parse_args()
 
     if args.scope == "global":
@@ -59,7 +82,7 @@ def main():
 
     if not args.target:
         parser.error("--target is required for --scope project")
-    return install_project(args.tool, Path(args.target).resolve(), args.type)
+    return install_project(args.tool, Path(args.target).resolve(), args.type, args.install_git_hook)
 
 
 if __name__ == "__main__":

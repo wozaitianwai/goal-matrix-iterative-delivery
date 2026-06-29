@@ -19,6 +19,12 @@ python3 scripts/install_adapter.py codex --target /path/to/project
 
 Project initialization writes `.goal-matrix/` state only. It does not edit Codex config.
 
+To also enforce publish policy for shell or manual pushes:
+
+```bash
+python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
+```
+
 ## Files
 
 - Root plugin manifest: plugin metadata and hook path.

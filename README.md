@@ -40,6 +40,12 @@ python3 scripts/install_adapter.py codex --target /path/to/project
 
 This writes only `.goal-matrix/` files in the target project. It does not edit Codex config.
 
+To also enforce publish policy for shell or manual pushes, install the native git hook:
+
+```bash
+python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
+```
+
 ## Daily Loop
 
 ```bash
@@ -47,6 +53,10 @@ printf 'fix the next bounded goal' | python3 core/goal_guard.py start --root .
 python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
+
+`scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
+
+`loop-governance.json` is the machine gate source for approval and publish policy. `STATE.md` is the human-readable view, and audit reports drift when the governance env names disagree.
 
 The loop is deliberately small:
 
@@ -82,6 +92,8 @@ python3 core/goal_guard.py publish-gate --root .
 ```
 
 It fails when the branch has more than one local commit ahead of its upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` when the user explicitly wants to preserve the history.
+
+The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy.
 
 ## Package Checks
 

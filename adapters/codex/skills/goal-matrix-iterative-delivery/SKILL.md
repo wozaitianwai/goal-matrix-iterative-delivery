@@ -69,6 +69,8 @@ project initialization status -> active goal -> failing check -> minimal change 
 - Use small local checkpoint commits only after verified child goals.
 - Before push, squash or merge fragmented local commits into readable history unless the user asks to preserve them.
 - `PreToolUse` must run `goal_guard.py publish-gate` before `git push` so fragmented history fails closed.
+- If `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
+- Treat `loop-governance.json` as the machine gate source of truth; if `STATE.md` mentions governance policy, audit must flag drift from JSON.
 - Final push needs final verification evidence and a clear branch/history state.
 
 ## Loop stage chain

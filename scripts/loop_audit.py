@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -17,6 +18,9 @@ LEVELS = {
     "L2": "assisted-with-verifier",
     "L3": "remote-ci-activity",
 }
+
+RUN_LOG_LINE_LIMIT = 500
+DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 
 
 def has_phrases(root, rel, phrases):
@@ -102,6 +106,43 @@ def has_repeated_run_evidence(root):
     return count >= 2
 
 
+def run_log_line_count(root):
+    path = root / "loop-run-log.md"
+    if not path.is_file():
+        return 0
+    return len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+
+
+def load_governance_policy(root):
+    path = root / "loop-governance.json"
+    if not path.is_file():
+        return {}
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return policy if isinstance(policy, dict) else {}
+
+
+def state_governance_approval_env(root):
+    path = root / "STATE.md"
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        lowered = line.lower()
+        if "governance" not in lowered or "approval" not in lowered:
+            continue
+        match = re.search(r"\b[A-Z][A-Z0-9_]*APPROVED[A-Z0-9_]*\b", line)
+        return match.group(0) if match else ""
+    return None
+
+
+def governance_state_envs(root):
+    policy = load_governance_policy(root)
+    policy_env = policy.get("approvalEnv", DEFAULT_APPROVAL_ENV) if policy else ""
+    return state_governance_approval_env(root), policy_env
+
+
 def audit(root):
     root = Path(root).resolve()
     signals = {name: has_phrases(root, rel, phrases) for name, (rel, phrases) in REQUIRED.items()}
@@ -122,6 +163,14 @@ def audit(root):
     signals["githubWorkflows"] = (root / ".github" / "workflows").is_dir()
     signals["remoteRunEvidence"] = has_remote_run_evidence(root)
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
+    run_log_lines = run_log_line_count(root)
+    signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
+    state_approval_env, policy_approval_env = governance_state_envs(root)
+    signals["stateGovernanceDrift"] = (
+        state_approval_env is not None
+        and bool(policy_approval_env)
+        and state_approval_env != policy_approval_env
+    )
 
     score = 10
     score += 18 if signals["stateFile"] else 0
@@ -164,6 +213,14 @@ def audit(root):
         blocked.append("Remote workflow run evidence is missing; L3 cannot be claimed.")
     if not all(signals[name] for name in REQUIRED):
         recommendations.append("Restore missing L1 spine files.")
+    if signals["runLogNeedsSummary"]:
+        blocked.append(
+            f"loop-run-log.md exceeds {RUN_LOG_LINE_LIMIT} lines; run a summary/pruning goal before continuing."
+        )
+        recommendations.append("Summarize or prune loop-run-log.md before the next long loop.")
+    if signals["stateGovernanceDrift"]:
+        blocked.append("STATE.md governance approval env drifts from loop-governance.json.")
+        recommendations.append("Treat loop-governance.json as the machine gate source and update STATE.md to match.")
 
     assessment = {
         "L0": "Loop spine incomplete.",
@@ -186,6 +243,10 @@ def audit(root):
         "score": min(score, 100),
         "level": level,
         "levels": LEVELS,
+        "runLogLineCount": run_log_lines,
+        "runLogLineLimit": RUN_LOG_LINE_LIMIT,
+        "stateGovernanceApprovalEnv": state_approval_env,
+        "governanceApprovalEnv": policy_approval_env,
         "assessment": assessment,
         "signals": signals,
         "unresolvedGaps": gaps,

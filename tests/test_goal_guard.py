@@ -369,6 +369,38 @@ def test_install_adapter_global_codex_syncs_installed_skill():
     assert verifier_text == read_text("adapters/codex/skills/loop-verifier/SKILL.md")
 
 
+def test_install_adapter_can_install_native_pre_push_hook():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = make_publish_repo(Path(tmp))
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(target),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        hook = target / ".git" / "hooks" / "pre-push"
+        hook_text = hook.read_text(encoding="utf-8") if hook.is_file() else ""
+        hook_exists = hook.is_file()
+        hook_is_executable = os.access(hook, os.X_OK)
+        git_commit(target, "one.txt", "one\n", "one")
+        git_commit(target, "two.txt", "two\n", "two")
+        hook_result = subprocess.run([str(hook)], cwd=target, text=True, capture_output=True)
+
+    assert result.returncode == 0, result.stderr
+    assert hook_exists
+    assert hook_is_executable
+    assert "goal_guard.py\" publish-gate --root \"$repo_root\"" in hook_text
+    assert hook_result.returncode == 1
+    assert "fragmented history" in hook_result.stderr
+
+
 def test_package_validator_checks_current_repo():
     result = subprocess.run(
         [sys.executable, str(PACKAGE_VALIDATOR), "--root", str(ROOT)],
@@ -547,6 +579,71 @@ def test_loop_audit_reports_unresolved_gap_register_items():
     assert "connectors" not in audit["unresolvedGaps"]
     assert audit["unresolvedGaps"] == []
     assert audit["nextAction"] == "No unresolved loop-engineering gaps."
+
+
+def test_loop_audit_flags_oversized_run_log_for_summary_goal():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_file(root / "STATE.md", "Last run: now\n\n## High Priority\n\n## Watch List\n")
+        write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(
+            root / "LOOP.md",
+            "# Loop\n\n## Active Loops\npackage-triage\n\n## Human Gates\n## Budget\n",
+        )
+        records = [
+            json.dumps({"run_id": f"r{i}", "outcome": "local"}, separators=(",", ":"))
+            for i in range(501)
+        ]
+        write_file(root / "loop-run-log.md", "# Runs\n\n## Recent Runs\n" + "\n".join(records) + "\n")
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["runLogNeedsSummary"] is True
+    assert audit["runLogLineCount"] > audit["runLogLineLimit"]
+    assert any("summary/pruning goal" in item for item in audit["blocked"])
+
+
+def test_loop_audit_flags_state_governance_env_drift():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_file(
+            root / "STATE.md",
+            (
+                "Last run: now\n\n## High Priority\n\n"
+                "- Keep governance gate active.\n\n"
+                "## Watch List\n\n"
+                "- G43 governance gate blocks approval-required paths unless OLD_APPROVED_FLAG is set.\n"
+            ),
+        )
+        write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(
+            root / "LOOP.md",
+            "# Loop\n\n## Active Loops\npackage-triage\n\n## Human Gates\n## Budget\n",
+        )
+        write_file(root / "loop-run-log.md", "# Runs\n\n## Recent Runs\n{\"outcome\":\"local\"}\n")
+        write_file(
+            root / "loop-governance.json",
+            json.dumps({"approvalEnv": "GOAL_MATRIX_APPROVED"}, indent=2),
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["stateGovernanceDrift"] is True
+    assert any("STATE.md governance approval env drifts" in item for item in audit["blocked"])
 
 
 def make_governance_repo(root):

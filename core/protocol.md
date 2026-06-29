@@ -114,6 +114,10 @@ project initialization status -> active goal -> failing check -> minimal change 
 
 Use small local checkpoint commits after verified child goals. Before pushing, squash or merge fragmented local commits into readable history unless the user asks to preserve every checkpoint. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push` so this policy can fail closed.
 
+Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
+
+Treat `loop-governance.json` as the machine gate source of truth for approval and publish policy. `STATE.md` is the human-readable view; if it mentions governance policy, `scripts/loop_audit.py` must flag drift from the JSON policy.
+
 A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
 
 ## Hook phase gates

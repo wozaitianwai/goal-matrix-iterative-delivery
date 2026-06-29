@@ -62,6 +62,8 @@ python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 
 `.goal-matrix/project-policy.json` 是目标项目运行时 policy 真源，负责 path、command 和 publish-action gate。`loop-governance.json` 只用于插件仓库自治，也就是本仓库自己的 CI/static governance 检查。`STATE.md` 只做人读视图，不重复 approval env、受保护路径或 publish pattern。人读状态复制机器 policy 值时，audit 会报告 `stateGovernanceDuplication`。
 
+`start` 或 `checkpoint` 之后，`.goal-matrix/state.json` 是 active goal 和 goal-matrix status 的机器状态真源。`.goal-matrix/goals/` 下的 Markdown 继续作为人读视图。
+
 approval-required path 只接受 scoped payload approval：必须绑定当前 active goal、覆盖对应 path、`expiresAt` 仍在未来，并包含 reason。`GOAL_MATRIX_APPROVED=1` 仍是显式本地紧急 override，不应作为默认 shell 环境。
 
 Fast Lane 只在没有 active goal，且请求只是拼写、文案或单函数小改时可用。它保留 policy/publish gate 和 focused verification，但跳过 goal-matrix checkpoint。命中受保护路径、发布动作、范围不清晰或多文件行为变更时回到正常 loop。

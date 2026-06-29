@@ -2689,6 +2689,50 @@ def test_start_command_escapes_pipe_in_prompt_title():
     assert "fix parser \\| keep table safe" in matrix_text
 
 
+def test_state_json_is_canonical_after_start():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "canonical machine state")
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        write_file(root / ".goal-matrix" / "goals" / "active-goal.md", "Active goal: corrupted\n")
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            "# Goal Matrix\n\n| broken |\n| --- |\n| bad |\n",
+        )
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert started.returncode == 0, started.stderr
+    assert state["schemaVersion"] == 1
+    assert state["activeGoal"] == "G1 - canonical machine state"
+    assert state["goalMatrix"]["childGoals"][0]["id"] == "G1"
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - canonical machine state"
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["userOutcome"] == "canonical machine state"
+
+
+def test_checkpoint_preserves_extended_matrix_fields():
+    prompt = "剩余 backlog:\nP1 first item\nP2 second item\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], prompt).returncode == 0
+
+        checkpoint = run_guard(["checkpoint", "--root", tmp, "--", sys.executable, "-c", "print('ok')"])
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert checkpoint.returncode == 0, checkpoint.stderr
+    status = json.loads(status_result.stdout)
+    scheduler = status["goalMatrix"]["childGoals"][0]
+    assert scheduler["id"] == "G1"
+    assert scheduler["status"] == "Done"
+    assert scheduler["dependencies"] == "none"
+    assert scheduler["risk"] == "medium"
+    assert scheduler["parallelSafety"] == "main thread only"
+
+
 def test_checkpoint_command_requires_passing_verification_before_advancing_goal():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0

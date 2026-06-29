@@ -542,7 +542,18 @@ def init_project(root, initialization_type):
     return 0
 
 
-def read_active_goal(root):
+def load_state_json(root):
+    path = Path(root) / ".goal-matrix" / "state.json"
+    if not path.is_file():
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def read_active_goal_markdown(root):
     path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
     if not path.is_file():
         return None
@@ -552,6 +563,14 @@ def read_active_goal(root):
             value = match.group(1).strip()
             return None if value.lower() == "none" else value
     return None
+
+
+def read_active_goal(root):
+    state = load_state_json(root)
+    if "activeGoal" in state:
+        value = state.get("activeGoal")
+        return value if value else None
+    return read_active_goal_markdown(root)
 
 
 def read_active_goal_value(root, field):
@@ -609,7 +628,7 @@ def split_markdown_table_row(line):
     return cells
 
 
-def read_goal_matrix(root):
+def read_goal_matrix_markdown(root):
     path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
     if not path.is_file():
         return []
@@ -630,6 +649,14 @@ def read_goal_matrix(root):
             goal.update({"dependencies": cells[5], "risk": cells[6], "parallelSafety": cells[7]})
         goals.append(goal)
     return goals
+
+
+def read_goal_matrix(root):
+    state = load_state_json(root)
+    matrix = state.get("goalMatrix")
+    if isinstance(matrix, dict) and isinstance(matrix.get("childGoals"), list):
+        return [goal for goal in matrix["childGoals"] if isinstance(goal, dict)]
+    return read_goal_matrix_markdown(root)
 
 
 def read_next_loop(root, active_goal):
@@ -693,6 +720,27 @@ def status_payload(root):
         "goalMatrix": goal_matrix_summary(goals, active_goal),
         "loopStages": list(LOOP_STAGES),
     }
+
+
+def write_state_json(root):
+    root = Path(root)
+    active_goal = read_active_goal_markdown(root)
+    goals = read_goal_matrix_markdown(root)
+    path = root / ".goal-matrix" / "state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "activeGoal": active_goal,
+                "goalMatrix": goal_matrix_summary(goals, active_goal),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def status_project(root):
@@ -835,6 +883,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
             encoding="utf-8",
         )
+        write_state_json(root)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
         return 0
 
@@ -857,6 +906,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
         encoding="utf-8",
     )
+    write_state_json(root)
     print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
     return 0
 
@@ -904,8 +954,8 @@ def mark_goal_done(root, goal_id):
     for line in lines:
         cells = split_markdown_table_row(line)
         if len(cells) >= 6 and cells[0] == goal_id:
-            cells[5] = "Done"
-            line = markdown_table_row(cells[:6])
+            cells[8 if len(cells) >= 9 else 5] = "Done"
+            line = markdown_table_row(cells)
         updated.append(line)
     path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
@@ -964,13 +1014,14 @@ def checkpoint_project(root, verify_command, if_active=False):
     goal_id = active_goal_id(active_goal)
     evidence_path = write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result)
     mark_goal_done(root, goal_id)
-    next_goal = first_pending_goal(read_goal_matrix(root))
+    next_goal = first_pending_goal(read_goal_matrix_markdown(root))
     next_active_goal = None
     if next_goal:
         next_active_goal = active_goal_title(next_goal)
         write_active_goal_from_goal(root, next_goal)
     else:
         write_active_goal_none(root)
+    write_state_json(root)
     print(
         json.dumps(
             {

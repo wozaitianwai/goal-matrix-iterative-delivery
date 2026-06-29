@@ -62,6 +62,8 @@ For broad review/backlog prompts, `start` creates one scheduler/acceptance activ
 
 `.goal-matrix/project-policy.json` is the target project runtime policy source for path, command, and publish-action gates. `loop-governance.json` is only the plugin repository autonomy policy used by this repo's own CI/static governance checks. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
 
+`.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status after `start` or `checkpoint`. Markdown files under `.goal-matrix/goals/` remain the human-readable view.
+
 Approval-required paths accept scoped payload approvals only when the approval names the active goal, covers the path, has a future `expiresAt`, and includes a reason. `GOAL_MATRIX_APPROVED=1` remains an explicit local emergency override, not a shell default.
 
 Fast Lane is available when there is no active goal and the request is a trivial typo, copy, or single-function edit. It keeps policy/publish gates and focused verification, but skips goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes use the normal loop.

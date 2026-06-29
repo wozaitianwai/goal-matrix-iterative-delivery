@@ -2086,14 +2086,98 @@ def test_policy_gate_blocks_approval_required_paths_without_approval():
     assert approved.returncode == 0, approved.stderr
 
 
-def test_policy_gate_accepts_payload_approval_token():
+def test_policy_gate_rejects_unscoped_payload_approval():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         make_policy_project(root, approvalRequiredPaths=["package.json"])
         payload = json.dumps({"approvalToken": "approved", "tool_input": {"file": "package.json"}})
         result = run_guard(["policy-gate", "--root", str(root), "--hook"], payload)
 
+    assert result.returncode == 1
+    assert "requires approval" in result.stderr
+
+
+def test_policy_gate_accepts_scoped_payload_approval():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: G1 - approved package change
+Initialization type: iteration
+Policy impact: approval-required
+Touched paths: package.json
+Delivery boundary: test approval
+Skipped: none
+Truth source: policy gate
+Verification: policy gate
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        payload = json.dumps(
+            {
+                "approval": {
+                    "goal": "G1",
+                    "paths": ["package.json"],
+                    "expiresAt": "2099-01-01T00:00:00Z",
+                    "reason": "user approved package change",
+                },
+                "tool_input": {"file": "package.json"},
+            }
+        )
+        result = run_guard(["policy-gate", "--root", str(root), "--hook"], payload)
+
     assert result.returncode == 0, result.stderr
+
+
+def test_policy_gate_rejects_expired_or_path_mismatched_payload_approval():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: G1 - approved package change
+Initialization type: iteration
+Policy impact: approval-required
+Touched paths: package.json
+Delivery boundary: test approval
+Skipped: none
+Truth source: policy gate
+Verification: policy gate
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        expired = json.dumps(
+            {
+                "approval": {
+                    "goal": "G1",
+                    "paths": ["package.json"],
+                    "expiresAt": "2000-01-01T00:00:00Z",
+                    "reason": "old approval",
+                },
+                "tool_input": {"file": "package.json"},
+            }
+        )
+        wrong_path = json.dumps(
+            {
+                "approval": {
+                    "goal": "G1",
+                    "paths": ["README.md"],
+                    "expiresAt": "2099-01-01T00:00:00Z",
+                    "reason": "wrong file",
+                },
+                "tool_input": {"file": "package.json"},
+            }
+        )
+        expired_result = run_guard(["policy-gate", "--root", str(root), "--hook"], expired)
+        wrong_path_result = run_guard(["policy-gate", "--root", str(root), "--hook"], wrong_path)
+
+    assert expired_result.returncode == 1
+    assert wrong_path_result.returncode == 1
 
 
 def test_policy_gate_blocks_protected_commands_from_tool_payload():

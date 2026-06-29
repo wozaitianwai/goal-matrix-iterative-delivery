@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -1188,19 +1189,50 @@ def collect_payload_commands(raw):
     return commands
 
 
-def payload_has_approval(raw):
+def approval_not_expired(value):
+    try:
+        expires_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > datetime.now(timezone.utc)
+
+
+def collect_payload_approvals(raw):
     data = hook_payload_data(raw)
+    approvals = []
 
     def walk(value, key=""):
-        if key.lower() in {"approvaltoken", "approval_token", "approval"} and truthy_value(value):
-            return True
+        if key.lower() == "approval" and isinstance(value, dict):
+            approvals.append(value)
         if isinstance(value, list):
-            return any(walk(item, key) for item in value)
-        if isinstance(value, dict):
-            return any(walk(item, str(child_key)) for child_key, item in value.items())
-        return False
+            for item in value:
+                walk(item, key)
+        elif isinstance(value, dict):
+            for child_key, item in value.items():
+                walk(item, str(child_key))
 
-    return walk(data)
+    walk(data)
+    return approvals
+
+
+def payload_has_approval(raw, root, path):
+    active_id = active_goal_id(read_active_goal(root))
+    for approval in collect_payload_approvals(raw):
+        if not active_id or str(approval.get("goal", "")).strip() != active_id:
+            continue
+        if not approval_not_expired(approval.get("expiresAt", "")):
+            continue
+        if not str(approval.get("reason", "")).strip():
+            continue
+        approval_paths = approval.get("paths", [])
+        if isinstance(approval_paths, str):
+            approval_paths = [approval_paths]
+        if policy_path_matches(path, [str(item) for item in approval_paths]):
+            return True
+
+    return False
 
 
 def policy_path_matches(path, patterns):
@@ -1229,13 +1261,17 @@ def policy_gate_problems(root, raw):
     if not policy:
         return []
 
-    approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)) or payload_has_approval(raw)
+    env_approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV))
     problems = []
     paths = collect_payload_paths(raw, root)
     for path in paths:
         if policy_path_matches(path, policy.get("immutablePaths", [])):
             problems.append(f"immutable path: {path}")
-        if policy_path_matches(path, policy.get("approvalRequiredPaths", [])) and not approved:
+        if (
+            policy_path_matches(path, policy.get("approvalRequiredPaths", []))
+            and not env_approved
+            and not payload_has_approval(raw, root, path)
+        ):
             problems.append(f"{path} requires approval via {policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)}")
 
     for command in collect_payload_commands(raw):

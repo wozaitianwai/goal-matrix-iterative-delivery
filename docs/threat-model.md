@@ -4,7 +4,7 @@ Goal Matrix Iterative Delivery is a Codex lifecycle adapter and workflow guardra
 
 ## What It Enforces
 
-- `PreToolUse` runs `policy-gate` before normal tool execution. It can block tool payloads that target `.goal-matrix/project-policy.json` `immutablePaths`, require `GOAL_MATRIX_APPROVED` or an explicit approval token for `approvalRequiredPaths`, and block configured `protectedCommands`.
+- `PreToolUse` runs `policy-gate` before normal tool execution. It can block tool payloads that target `.goal-matrix/project-policy.json` `immutablePaths`, require `GOAL_MATRIX_APPROVED` or a scoped payload approval for `approvalRequiredPaths`, and block configured `protectedCommands`.
 - `policy-gate --debug` prints the paths and commands recognized from a hook payload so fixture updates can be checked against the real parser surface.
 - `PreToolUse` runs `publish-gate` before `git push` and before commands matching `.goal-matrix/project-policy.json` `publishActionPatterns`. It checks upstream state, local ahead/behind count, clean worktree state, open active goal state, and current checkpoint evidence.
 - `Stop` preserves the review gate exit code. A failed review gate blocks the lifecycle hook instead of being swallowed by `exit 0`.
@@ -37,5 +37,5 @@ Goal Matrix Iterative Delivery is a Codex lifecycle adapter and workflow guardra
 ## Operator Controls
 
 - Keep `.goal-matrix/project-policy.json` explicit and reviewed when enabling path or command policy.
-- Treat `GOAL_MATRIX_APPROVED=1` as a short-lived approval token, not a persistent shell default.
+- Treat `GOAL_MATRIX_APPROVED=1` as a short-lived local emergency override, not a persistent shell default. Payload approvals should bind the active goal, path, future expiry, and reason.
 - Keep CI and branch protection authoritative for team workflows. This plugin provides local and lifecycle guardrails; it is not the final trust boundary.

@@ -118,6 +118,8 @@ Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeed
 
 Treat `.goal-matrix/project-policy.json` as the target project runtime policy source for path, command, and publish-action gates. Treat `loop-governance.json` as plugin repository autonomy for this repo's own CI/static governance checks. `STATE.md` is human-readable only and must not repeat approval envs, protected paths, or publish patterns. If human state copies machine-owned policy values, `scripts/loop_audit.py` must flag `stateGovernanceDuplication`.
 
+Payload approvals for approval-required paths must be scoped to the active goal, target path, future expiry, and a reason. Environment approval remains an explicit local emergency override only.
+
 Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
 
 Broad prompt handling: first generate a pending matrix with scope, truth source, verification, dependencies, risk, and parallel-safety metadata. Keep one scheduler/acceptance active goal in the main thread; optional subagents may only produce candidates or investigations. The main thread reviews outputs, runs the real verification, and checkpoints child goals one at a time.

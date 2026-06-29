@@ -1,0 +1,6 @@
+{
+  "tool_name": "functions.apply_patch",
+  "tool_input": {
+    "patch": "*** Begin Patch\n*** Update File: secrets/token.txt\n@@\n-old\n+new\n*** End Patch\n"
+  }
+}

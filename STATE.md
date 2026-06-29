@@ -35,7 +35,7 @@ Loop paused: false
 - Public READMEs expose `python3 scripts/loop_verify.py`.
 - Global Codex install syncs every packaged Codex skill, including `loop-verifier`.
 - Doctor reports installed `loop-verifier` drift.
-- Codex plugin cache refreshed to `0.1.0+codex.20260626122349`.
+- Codex plugin cache refreshed to `0.1.2+codex.20260629215745`.
 
 ## Recent Noise
 

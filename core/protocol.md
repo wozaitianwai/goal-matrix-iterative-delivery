@@ -116,9 +116,15 @@ Use small local checkpoint commits after verified child goals. Before pushing, s
 
 Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
 
-Treat `loop-governance.json` as the machine gate source of truth for approval and publish policy. `STATE.md` is human-readable only and must not repeat approval envs, protected paths, or publish patterns. If human state copies machine-owned policy values, `scripts/loop_audit.py` must flag `stateGovernanceDuplication`.
+Treat `.goal-matrix/project-policy.json` as the target project runtime policy source for path, command, and publish-action gates. Treat `loop-governance.json` as plugin repository autonomy for this repo's own CI/static governance checks. `STATE.md` is human-readable only and must not repeat approval envs, protected paths, or publish patterns. If human state copies machine-owned policy values, `scripts/loop_audit.py` must flag `stateGovernanceDuplication`.
+
+Payload approvals for approval-required paths must be scoped to the active goal, target path, future expiry, and a reason. Environment approval remains an explicit local emergency override only.
+
+After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status. Markdown goal files remain a human-readable projection and fallback for legacy state.
 
 Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
+
+Broad prompt handling: first generate a pending matrix with scope, truth source, verification, dependencies, risk, and parallel-safety metadata. Keep one scheduler/acceptance active goal in the main thread; optional subagents may only produce candidates or investigations. The main thread reviews outputs, runs the real verification, and checkpoints child goals one at a time.
 
 A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
 
@@ -129,7 +135,7 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 | Hook | Phase boundary |
 | --- | --- |
 | `SessionStart` | Show project initialization status and loop policy. |
-| `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`. |
+| `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`; do not run `start` or write `.goal-matrix` state by default. UserPromptSubmit 不会运行 `start`。 |
 | `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block `git push` when publish history is fragmented. |
 | `PostToolUse` | Tie tool output back to the active goal truth source or next step. |
 | `Stop` | Require verification, checkpoint/status evidence, and push history policy before completion. |

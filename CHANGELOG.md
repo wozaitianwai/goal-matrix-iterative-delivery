@@ -1,9 +1,16 @@
 # Changelog
 
+## v0.1.2-codex.1 - 2026-06-29
+
+- Publish the static-review guardrail fixes under plugin version `0.1.2+codex.20260629215745`.
+- Pin Codex plugin marketplace install instructions to `v0.1.2-codex.1`.
+- Local tag readback: `v0.1.2-codex.1` resolves to commit `7507b330e36fe9e2ebc2dcfa60121fb5fb470651`.
+
 ## v0.1.1-codex.1 - 2026-06-29
 
 - Pin Codex plugin marketplace install instructions to `v0.1.1-codex.1` instead of a moving branch.
 - Document the release checklist needed before publishing an install ref.
+- Local tag readback: `v0.1.1-codex.1` resolves to commit `21498b349b29dcbc4bff726d9d4a393758afe201`.
 
 ### Release checklist
 

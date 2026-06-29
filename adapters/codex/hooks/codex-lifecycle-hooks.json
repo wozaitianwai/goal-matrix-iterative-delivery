@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; out=$(python3 \"$root/core/goal_guard.py\" hook UserPromptSubmit < \"$tmp\"); if [ -n \"$out\" ]; then python3 \"$root/core/goal_guard.py\" start --root . < \"$tmp\" >&2; python3 \"$root/core/goal_guard.py\" hook UserPromptSubmit < \"$tmp\"; else printf \"%s\" \"$out\"; fi; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; $tmp = New-TemporaryFile; $input | Set-Content -Path $tmp; $out = Get-Content $tmp | python \"$root\\core\\goal_guard.py\" hook UserPromptSubmit; if ($out) { Get-Content $tmp | python \"$root\\core\\goal_guard.py\" start --root . 1>&2; Get-Content $tmp | python \"$root\\core\\goal_guard.py\" hook UserPromptSubmit } else { $out }; Remove-Item $tmp }",
+            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" hook UserPromptSubmit; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; $input | python \"$root\\core\\goal_guard.py\" hook UserPromptSubmit }",
             "timeout": 5,
             "statusMessage": "Checking goal matrix guard..."
           }
@@ -58,8 +58,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" gate --phase review_gate --root . --verify python3 \"$root/scripts/loop_verify.py\" >&2; rc=$?; if [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; python3 \"$root/core/goal_guard.py\" hook Stop; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; python \"$root\\core\\goal_guard.py\" gate --phase review_gate --root . --verify python \"$root\\scripts\\loop_verify.py\" 1>&2; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; python \"$root\\core\\goal_guard.py\" hook Stop }",
+            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" gate --phase review_gate --root . --verify python3 \"$root/core/goal_guard.py\" active-verify --root . >&2; rc=$?; if [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; python3 \"$root/core/goal_guard.py\" hook Stop; exit 0",
+            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; python \"$root\\core\\goal_guard.py\" gate --phase review_gate --root . --verify python \"$root\\core\\goal_guard.py\" active-verify --root . 1>&2; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; python \"$root\\core\\goal_guard.py\" hook Stop }",
             "timeout": 30,
             "statusMessage": "Checking loop completion..."
           }

@@ -23,6 +23,7 @@ RUN_LOG_LINE_LIMIT = 500
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
 MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")
+VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+(?:[+.-][A-Za-z0-9.-]+)?\b")
 
 
 def has_phrases(root, rel, phrases):
@@ -126,6 +127,30 @@ def load_governance_policy(root):
     return policy if isinstance(policy, dict) else {}
 
 
+def load_json_version(root, rel):
+    path = root / rel
+    if not path.is_file():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    return str(data.get("version", "")) if isinstance(data, dict) else ""
+
+
+def state_version_mentions(root):
+    path = root / "STATE.md"
+    if not path.is_file():
+        return []
+    versions = set()
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        lowered = line.lower()
+        if not any(token in lowered for token in ("plugin", "cache", "version")):
+            continue
+        versions.update(VERSION_RE.findall(line))
+    return sorted(versions)
+
+
 def policy_string_values(value):
     if isinstance(value, str):
         return [value] if value else []
@@ -185,8 +210,18 @@ def audit(root):
     policy_approval_env = governance_policy.get("approvalEnv", DEFAULT_APPROVAL_ENV) if governance_policy else ""
     state_machine_values = state_governance_machine_values(root, governance_policy)
     state_approval_env = next((value for value in state_machine_values if "APPROV" in value), None)
+    repo_versions = {
+        "package": load_json_version(root, "package.json"),
+        "plugin": load_json_version(root, ".codex-plugin/plugin.json"),
+    }
+    repo_version_values = {value for value in repo_versions.values() if value}
+    state_versions = state_version_mentions(root)
+    stale_state_versions = sorted(version for version in state_versions if version not in repo_version_values)
     signals["stateGovernanceDuplication"] = bool(state_machine_values)
     signals["stateGovernanceDrift"] = signals["stateGovernanceDuplication"]
+    signals["stateVersionDrift"] = bool(stale_state_versions) or (
+        bool(repo_versions["package"] and repo_versions["plugin"]) and repo_versions["package"] != repo_versions["plugin"]
+    )
 
     score = 10
     score += 18 if signals["stateFile"] else 0
@@ -237,6 +272,9 @@ def audit(root):
     if signals["stateGovernanceDuplication"]:
         blocked.append("STATE.md repeats machine governance values from loop-governance.json.")
         recommendations.append("Keep machine-owned governance values only in loop-governance.json; keep STATE.md human-only.")
+    if signals["stateVersionDrift"]:
+        blocked.append("STATE.md mentions stale plugin version or package/plugin versions diverge.")
+        recommendations.append("Update STATE.md plugin cache/version readback after package or plugin version changes.")
 
     assessment = {
         "L0": "Loop spine incomplete.",
@@ -263,6 +301,8 @@ def audit(root):
         "runLogLineLimit": RUN_LOG_LINE_LIMIT,
         "stateGovernanceApprovalEnv": state_approval_env,
         "stateGovernanceMachineValues": state_machine_values,
+        "stateVersionMentions": state_versions,
+        "repoVersions": repo_versions,
         "governanceApprovalEnv": policy_approval_env,
         "assessment": assessment,
         "signals": signals,

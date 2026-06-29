@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -264,6 +265,20 @@ def read_project_policy(root):
     except json.JSONDecodeError:
         return {}
     return policy if isinstance(policy, dict) else {}
+
+
+def read_plugin_governance(root):
+    root = Path(root)
+    if not (root / ".codex-plugin" / "plugin.json").is_file():
+        return {}
+    governance_path = root / "loop-governance.json"
+    if not governance_path.is_file():
+        return {}
+    try:
+        governance = json.loads(governance_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return governance if isinstance(governance, dict) else {}
 
 
 def strict_triggering_enabled(root):
@@ -527,7 +542,18 @@ def init_project(root, initialization_type):
     return 0
 
 
-def read_active_goal(root):
+def load_state_json(root):
+    path = Path(root) / ".goal-matrix" / "state.json"
+    if not path.is_file():
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def read_active_goal_markdown(root):
     path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
     if not path.is_file():
         return None
@@ -537,6 +563,26 @@ def read_active_goal(root):
             value = match.group(1).strip()
             return None if value.lower() == "none" else value
     return None
+
+
+def read_active_goal(root):
+    state = load_state_json(root)
+    if "activeGoal" in state:
+        value = state.get("activeGoal")
+        return value if value else None
+    return read_active_goal_markdown(root)
+
+
+def read_active_goal_value(root, field):
+    path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
+    if not path.is_file():
+        return ""
+    pattern = re.compile(rf"^{re.escape(field)}:\s*(.+)$", re.IGNORECASE)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip().strip("`")
+    return ""
 
 
 def fast_lane_available(root):
@@ -582,7 +628,7 @@ def split_markdown_table_row(line):
     return cells
 
 
-def read_goal_matrix(root):
+def read_goal_matrix_markdown(root):
     path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
     if not path.is_file():
         return []
@@ -591,17 +637,26 @@ def read_goal_matrix(root):
         cells = split_markdown_table_row(line)
         if len(cells) < 6 or cells[0] in ("Goal", "---"):
             continue
-        goals.append(
-            {
-                "id": cells[0],
-                "userOutcome": cells[1],
-                "engineeringSlice": cells[2],
-                "truthSource": cells[3],
-                "verification": cells[4],
-                "status": cells[5],
-            }
-        )
+        goal = {
+            "id": cells[0],
+            "userOutcome": cells[1],
+            "engineeringSlice": cells[2],
+            "truthSource": cells[3],
+            "verification": cells[4],
+            "status": cells[8] if len(cells) >= 9 else cells[5],
+        }
+        if len(cells) >= 9:
+            goal.update({"dependencies": cells[5], "risk": cells[6], "parallelSafety": cells[7]})
+        goals.append(goal)
     return goals
+
+
+def read_goal_matrix(root):
+    state = load_state_json(root)
+    matrix = state.get("goalMatrix")
+    if isinstance(matrix, dict) and isinstance(matrix.get("childGoals"), list):
+        return [goal for goal in matrix["childGoals"] if isinstance(goal, dict)]
+    return read_goal_matrix_markdown(root)
 
 
 def read_next_loop(root, active_goal):
@@ -667,6 +722,27 @@ def status_payload(root):
     }
 
 
+def write_state_json(root):
+    root = Path(root)
+    active_goal = read_active_goal_markdown(root)
+    goals = read_goal_matrix_markdown(root)
+    path = root / ".goal-matrix" / "state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "activeGoal": active_goal,
+                "goalMatrix": goal_matrix_summary(goals, active_goal),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def status_project(root):
     payload = status_payload(root)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -682,29 +758,69 @@ def first_prompt_line(text):
     return "Start next goal"
 
 
-def append_goal_matrix_row(path, goal_id, title):
+GOAL_MATRIX_HEADER = "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |"
+GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- |"
+EXTENDED_GOAL_MATRIX_HEADER = (
+    "| Goal | User outcome | Engineering slice | Truth source | Verification | Dependencies | Risk | Parallel safety | Status |"
+)
+EXTENDED_GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+
+
+def goal_matrix_text_with_header(text, extended=False):
+    header = EXTENDED_GOAL_MATRIX_HEADER if extended else GOAL_MATRIX_HEADER
+    separator = EXTENDED_GOAL_MATRIX_SEPARATOR if extended else GOAL_MATRIX_SEPARATOR
+    if GOAL_MATRIX_HEADER not in text and EXTENDED_GOAL_MATRIX_HEADER not in text:
+        return f"# Goal Matrix\n\n{header}\n{separator}\n"
+    if extended and EXTENDED_GOAL_MATRIX_HEADER not in text:
+        text = text.replace(GOAL_MATRIX_HEADER, EXTENDED_GOAL_MATRIX_HEADER, 1)
+        text = text.replace(GOAL_MATRIX_SEPARATOR, EXTENDED_GOAL_MATRIX_SEPARATOR, 1)
+    return text
+
+
+def append_goal_matrix_row(
+    path,
+    goal_id,
+    title,
+    engineering_slice="Start one bounded child goal",
+    truth_source="`.goal-matrix` status",
+    verification="`python3 core/goal_guard.py status --root .`",
+    dependencies=None,
+    risk=None,
+    parallel_safety=None,
+):
     text = path.read_text(encoding="utf-8") if path.is_file() else "# Goal Matrix\n\n"
-    if "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |" not in text:
-        text = (
-            "# Goal Matrix\n\n"
-            "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |\n"
-            "| --- | --- | --- | --- | --- | --- |\n"
-        )
+    extended = dependencies is not None or risk is not None or parallel_safety is not None
+    text = goal_matrix_text_with_header(text, extended)
     placeholder = "| G0 | Initialize project governance | Create `.goal-matrix` baseline | Policy/docs | Audit passes | Pending |"
     text = "\n".join(line for line in text.splitlines() if line.strip() != placeholder) + "\n"
     if not text.endswith("\n"):
         text += "\n"
-    text += markdown_table_row(
-        [
-            goal_id,
-            title,
-            "Start one bounded child goal",
-            "`.goal-matrix` status",
-            "`python3 core/goal_guard.py status --root .`",
-            "Pending",
-        ]
-    ) + "\n"
+    cells = [goal_id, title, engineering_slice, truth_source, verification]
+    if extended:
+        cells.extend([dependencies or "none", risk or "medium", parallel_safety or "main thread only"])
+    cells.append("Pending")
+    text += markdown_table_row(cells) + "\n"
     path.write_text(text, encoding="utf-8")
+
+
+def broad_prompt_items(prompt):
+    items = []
+    for line in prompt_text(prompt).splitlines():
+        line = line.strip()
+        if not line or line.endswith(":"):
+            continue
+        line = re.sub(r"^[-*]\s+", "", line)
+        line = re.sub(r"^\d+[.)]\s+", "", line)
+        match = re.match(r"^(P[0-2])\s*[:：-]?\s*(.+)$", line, re.IGNORECASE)
+        if match:
+            risk, title = match.groups()
+            items.append({"title": title.strip()[:80], "risk": risk.upper()})
+    return items if len(items) >= 2 else []
+
+
+def goal_id_after(goal_id, offset):
+    match = re.match(r"G(\d+)$", goal_id)
+    return f"G{int(match.group(1)) + offset}" if match else f"{goal_id}.{offset}"
 
 
 def start_project(root, prompt):
@@ -723,6 +839,54 @@ def start_project(root, prompt):
         return 0
 
     goal_id = next_goal_id(goals)
+    items = broad_prompt_items(prompt)
+    if items:
+        active_goal = f"{goal_id} - Schedule broad prompt delivery"
+        append_goal_matrix_row(
+            goals_dir / "goal-matrix.md",
+            goal_id,
+            "Schedule broad prompt delivery",
+            "Classify dependency order and review child outputs before checkpoint",
+            "start command status readback",
+            "`python3 core/goal_guard.py status --root .`",
+            "none",
+            "medium",
+            "main thread only",
+        )
+        planned = []
+        for index, item in enumerate(items, start=1):
+            child_id = goal_id_after(goal_id, index)
+            planned.append(child_id)
+            append_goal_matrix_row(
+                goals_dir / "goal-matrix.md",
+                child_id,
+                item["title"],
+                f"Implement bounded item: {item['title']}",
+                "item-specific truth source",
+                "item-specific verification",
+                goal_id,
+                item["risk"],
+                "independent if touched paths do not overlap",
+            )
+        (goals_dir / "active-goal.md").write_text(
+            f"""# Active Goal
+
+Active goal: {active_goal}
+Initialization type: iteration
+Policy impact: none
+Touched paths: .goal-matrix/goals/goal-matrix.md, .goal-matrix/goals/active-goal.md
+Delivery boundary: scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint
+Skipped: subagent dispatch and child implementation
+Truth source: `.goal-matrix` status
+Verification: python3 core/goal_guard.py status --root .
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+            encoding="utf-8",
+        )
+        write_state_json(root)
+        print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
+        return 0
+
     title = first_prompt_line(prompt)
     active_goal = f"{goal_id} - {title}"
 
@@ -742,6 +906,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
         encoding="utf-8",
     )
+    write_state_json(root)
     print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
     return 0
 
@@ -789,8 +954,8 @@ def mark_goal_done(root, goal_id):
     for line in lines:
         cells = split_markdown_table_row(line)
         if len(cells) >= 6 and cells[0] == goal_id:
-            cells[5] = "Done"
-            line = markdown_table_row(cells[:6])
+            cells[8 if len(cells) >= 9 else 5] = "Done"
+            line = markdown_table_row(cells)
         updated.append(line)
     path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
@@ -849,13 +1014,14 @@ def checkpoint_project(root, verify_command, if_active=False):
     goal_id = active_goal_id(active_goal)
     evidence_path = write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result)
     mark_goal_done(root, goal_id)
-    next_goal = first_pending_goal(read_goal_matrix(root))
+    next_goal = first_pending_goal(read_goal_matrix_markdown(root))
     next_active_goal = None
     if next_goal:
         next_active_goal = active_goal_title(next_goal)
         write_active_goal_from_goal(root, next_goal)
     else:
         write_active_goal_none(root)
+    write_state_json(root)
     print(
         json.dumps(
             {
@@ -869,6 +1035,26 @@ def checkpoint_project(root, verify_command, if_active=False):
         )
     )
     return 0
+
+
+def active_verify(root):
+    root = Path(root)
+    if not read_active_goal(root):
+        print("active verification blocked: no active goal", file=sys.stderr)
+        return 1
+    verification = read_active_goal_value(root, "Verification")
+    if not verification:
+        print("active verification blocked: missing Verification field", file=sys.stderr)
+        return 1
+    try:
+        verify_command = shlex.split(verification)
+    except ValueError as exc:
+        print(f"active verification blocked: cannot parse Verification field: {exc}", file=sys.stderr)
+        return 1
+    if is_metadata_only_verification(verify_command):
+        print("active verification blocked: metadata-only verification is not allowed", file=sys.stderr)
+        return 1
+    return subprocess.run(verify_command, cwd=root, text=True).returncode
 
 
 def toml_block(text, header):
@@ -1038,6 +1224,8 @@ def collect_payload_commands(raw):
     def walk(value, key=""):
         if isinstance(value, str) and command_field_hint(key):
             commands.append(value)
+        elif isinstance(value, list) and key.lower() in {"args", "argv"} and all(isinstance(item, str) for item in value):
+            commands.append(" ".join(value))
         elif isinstance(value, list):
             for item in value:
                 walk(item, key)
@@ -1052,19 +1240,50 @@ def collect_payload_commands(raw):
     return commands
 
 
-def payload_has_approval(raw):
+def approval_not_expired(value):
+    try:
+        expires_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > datetime.now(timezone.utc)
+
+
+def collect_payload_approvals(raw):
     data = hook_payload_data(raw)
+    approvals = []
 
     def walk(value, key=""):
-        if key.lower() in {"approvaltoken", "approval_token", "approval"} and truthy_value(value):
-            return True
+        if key.lower() == "approval" and isinstance(value, dict):
+            approvals.append(value)
         if isinstance(value, list):
-            return any(walk(item, key) for item in value)
-        if isinstance(value, dict):
-            return any(walk(item, str(child_key)) for child_key, item in value.items())
-        return False
+            for item in value:
+                walk(item, key)
+        elif isinstance(value, dict):
+            for child_key, item in value.items():
+                walk(item, str(child_key))
 
-    return walk(data)
+    walk(data)
+    return approvals
+
+
+def payload_has_approval(raw, root, path):
+    active_id = active_goal_id(read_active_goal(root))
+    for approval in collect_payload_approvals(raw):
+        if not active_id or str(approval.get("goal", "")).strip() != active_id:
+            continue
+        if not approval_not_expired(approval.get("expiresAt", "")):
+            continue
+        if not str(approval.get("reason", "")).strip():
+            continue
+        approval_paths = approval.get("paths", [])
+        if isinstance(approval_paths, str):
+            approval_paths = [approval_paths]
+        if policy_path_matches(path, [str(item) for item in approval_paths]):
+            return True
+
+    return False
 
 
 def policy_path_matches(path, patterns):
@@ -1093,13 +1312,17 @@ def policy_gate_problems(root, raw):
     if not policy:
         return []
 
-    approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)) or payload_has_approval(raw)
+    env_approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV))
     problems = []
     paths = collect_payload_paths(raw, root)
     for path in paths:
         if policy_path_matches(path, policy.get("immutablePaths", [])):
             problems.append(f"immutable path: {path}")
-        if policy_path_matches(path, policy.get("approvalRequiredPaths", [])) and not approved:
+        if (
+            policy_path_matches(path, policy.get("approvalRequiredPaths", []))
+            and not env_approved
+            and not payload_has_approval(raw, root, path)
+        ):
             problems.append(f"{path} requires approval via {policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)}")
 
     for command in collect_payload_commands(raw):
@@ -1110,10 +1333,18 @@ def policy_gate_problems(root, raw):
     return problems
 
 
-def policy_gate(root, hook_mode=False):
+def policy_gate_debug(root, raw):
+    return {"paths": collect_payload_paths(raw, root), "commands": collect_payload_commands(raw)}
+
+
+def policy_gate(root, hook_mode=False, debug=False):
     raw = sys.stdin.read()
     if hook_mode and not raw.strip():
+        if debug:
+            print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
         return 0
+    if debug:
+        print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
     problems = policy_gate_problems(root, raw)
     for problem in problems:
         print(f"policy gate blocked: {problem}", file=sys.stderr)
@@ -1192,27 +1423,48 @@ def hook_is_git_push(raw):
     return bool(re.search(r"\bgit\s+push\b", text))
 
 
+def runtime_publish_patterns(root):
+    patterns = []
+    for source in (read_project_policy(root), read_plugin_governance(root)):
+        for pattern in source.get("publishActionPatterns", []):
+            if pattern and pattern not in patterns:
+                patterns.append(pattern)
+    return patterns
+
+
+def hook_is_publish_action(raw, root):
+    if hook_is_git_push(raw):
+        return True
+    patterns = runtime_publish_patterns(root)
+    if not patterns:
+        return False
+    text = hook_payload_text(raw).lower()
+    for pattern in patterns:
+        pattern_lower = pattern.lower().strip()
+        if pattern_lower and pattern_lower in text:
+            return True
+    return any(
+        protected_command_matches(command, pattern)
+        for command in collect_payload_commands(raw)
+        for pattern in patterns
+    )
+
+
 def publish_gate(root, hook_mode=False):
     raw = sys.stdin.read()
-    if hook_mode and not hook_is_git_push(raw):
+    root = Path(root)
+    if hook_mode and not hook_is_publish_action(raw, root):
         return 0
 
-    root = Path(root)
     inside = git_output(root, "rev-parse", "--is-inside-work-tree")
     if inside.returncode:
         print("publish gate blocked: not inside a git worktree", file=sys.stderr)
         return 1
 
-    if truthy_env(ALLOW_FRAGMENTED_PUSH_ENV):
-        return 0
-
     branch = current_branch(root)
     base_ref = publish_base_ref(root, branch)
     if not base_ref:
-        print(
-            f"publish gate blocked: missing upstream; set upstream or {ALLOW_FRAGMENTED_PUSH_ENV}=1",
-            file=sys.stderr,
-        )
+        print("publish gate blocked: missing upstream; set upstream before push", file=sys.stderr)
         return 1
 
     counts = git_output(root, "rev-list", "--left-right", "--count", f"HEAD...{base_ref}")
@@ -1225,7 +1477,7 @@ def publish_gate(root, hook_mode=False):
     problems = publish_state_problems(root)
     if behind:
         problems.append(f"remote history not integrated: {behind} commit(s) behind {base_ref}")
-    if ahead > 1:
+    if ahead > 1 and not truthy_env(ALLOW_FRAGMENTED_PUSH_ENV):
         problems.append(
             f"fragmented history: {ahead} commits ahead of {base_ref}; "
             f"squash or merge before push, or set {ALLOW_FRAGMENTED_PUSH_ENV}=1"
@@ -1269,7 +1521,16 @@ def gate_decision(phase, text, verify_command=None, root="."):
         if review_changes:
             return emit_gate("execute", "review requested changes")
         if fast_lane_available(root) and not review_approved:
-            return emit_gate("checkpoint", "Fast Lane: no active goal; require focused verification, not goal checkpoint")
+            if re.search(r"^focused verification:\s*\S", lowered, re.MULTILINE) and re.search(
+                r"^verified with:\s*\S", lowered, re.MULTILINE
+            ):
+                return emit_gate("checkpoint", "Fast Lane: focused verification evidence present")
+            if not verify_command:
+                return emit_gate("execute", "Fast Lane requires focused verification")
+            result = subprocess.run(verify_command, cwd=Path(root), text=True, capture_output=True)
+            if result.returncode:
+                return emit_gate("execute", "Fast Lane verification command failed")
+            return emit_gate("checkpoint", "Fast Lane: focused verification passed")
         if review_approved:
             if not verify_command:
                 return emit_gate("execute", "missing machine verification command")
@@ -1389,6 +1650,8 @@ def main():
     init_parser.add_argument("--type", choices=INITIALIZATION_TYPES, default="new-project")
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--root", default=".")
+    active_verify_parser = sub.add_parser("active-verify")
+    active_verify_parser.add_argument("--root", default=".")
     doctor_parser = sub.add_parser("doctor")
     doctor_parser.add_argument("--root", default=".")
     doctor_parser.add_argument("--fix", action="store_true")
@@ -1398,6 +1661,7 @@ def main():
     policy_gate_parser = sub.add_parser("policy-gate")
     policy_gate_parser.add_argument("--root", default=".")
     policy_gate_parser.add_argument("--hook", action="store_true")
+    policy_gate_parser.add_argument("--debug", action="store_true")
     gate_parser = sub.add_parser("gate")
     gate_parser.add_argument("--phase", choices=("design_gate", "review_gate"), required=True)
     gate_parser.add_argument("--root", default=".")
@@ -1417,12 +1681,14 @@ def main():
         return checkpoint_project(args.root, verify_command, args.if_active)
     if args.cmd == "status":
         return status_project(args.root)
+    if args.cmd == "active-verify":
+        return active_verify(args.root)
     if args.cmd == "doctor":
         return doctor_project(args.root, args.fix)
     if args.cmd == "publish-gate":
         return publish_gate(args.root, args.hook)
     if args.cmd == "policy-gate":
-        return policy_gate(args.root, args.hook)
+        return policy_gate(args.root, args.hook, args.debug)
     if args.cmd == "gate":
         verify_command = args.verify[1:] if args.verify and args.verify[:1] == ["--"] else args.verify
         return gate_decision(args.phase, gate_input(args.root, args.file), verify_command, args.root)

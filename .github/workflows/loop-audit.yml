@@ -43,6 +43,4 @@ jobs:
           python3 core/goal_guard.py hook PreToolUse >/tmp/pre-tool.json
           python3 core/goal_guard.py hook Stop >/tmp/stop.json
       - name: Loop verify
-        env:
-          GOAL_MATRIX_APPROVED: "1"
         run: python3 scripts/loop_verify.py

@@ -24,7 +24,7 @@ Use it when a request is too broad for a single edit and you need the agent to k
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.1-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.2-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
@@ -56,9 +56,15 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
+For broad review/backlog prompts, `start` creates one scheduler/acceptance active goal plus multiple Pending child goals before implementation. Child rows include dependency, risk, and parallel-safety metadata; the main thread still verifies and checkpoints each child goal one at a time.
+
 `scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
 
-`loop-governance.json` is the machine gate source for approval and publish policy. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
+`.goal-matrix/project-policy.json` is the target project runtime policy source for path, command, and publish-action gates. `loop-governance.json` is only the plugin repository autonomy policy used by this repo's own CI/static governance checks. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
+
+`.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status after `start` or `checkpoint`. Markdown files under `.goal-matrix/goals/` remain the human-readable view.
+
+Approval-required paths accept scoped payload approvals only when the approval names the active goal, covers the path, has a future `expiresAt`, and includes a reason. `GOAL_MATRIX_APPROVED=1` remains an explicit local emergency override, not a shell default.
 
 Fast Lane is available when there is no active goal and the request is a trivial typo, copy, or single-function edit. It keeps policy/publish gates and focused verification, but skips goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes use the normal loop.
 
@@ -91,13 +97,13 @@ Webhook presets are included for generic, Slack, Discord, Feishu, DingTalk, and 
 
 ## Publish Gate
 
-The Codex `PreToolUse` hook runs this gate before `git push`:
+The Codex `PreToolUse` hook runs this gate before `git push` and commands matching `publishActionPatterns` such as `npm publish`, `twine upload`, and `gh release`:
 
 ```bash
 python3 core/goal_guard.py publish-gate --root .
 ```
 
-It fails when the branch has more than one local commit ahead of its upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` when the user explicitly wants to preserve the history.
+It fails when the worktree is dirty, an active goal is still open, checkpoint evidence is missing, upstream is missing or behind, or the branch has more than one local commit ahead of upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` only when the user explicitly wants to preserve fragmented local commits.
 
 The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy. If a hook already exists, it is chained from `.git/hooks/pre-push.goal-matrix.previous`; restore it by moving that file back to `.git/hooks/pre-push`.
 
@@ -114,7 +120,7 @@ This project is open source under the [MIT License](LICENSE). You may use, modif
 
 ## Boundaries
 
-Lifecycle hooks inject context into the model. They do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.
+Lifecycle hooks inject context into the model. UserPromptSubmit does not run `start` or write `.goal-matrix` state by default; use `goal_guard.py start --root .` only after explicit start/checkpoint/create-goal intent. Hooks also do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.
 
 Codex is the only lifecycle adapter in this package. Add another adapter only when this repo contains real hook wiring for that host.
 

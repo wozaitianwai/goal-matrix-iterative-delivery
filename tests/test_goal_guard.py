@@ -1432,6 +1432,22 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
             ["policy-gate", "--root", str(policy_root), "--hook"],
             read_hook_fixture("pre-tool-protected-command.json"),
         )
+        edit = run_guard(
+            ["policy-gate", "--root", str(policy_root), "--hook"],
+            read_hook_fixture("pre-tool-edit.json"),
+        )
+        patch = run_guard(
+            ["policy-gate", "--root", str(policy_root), "--hook"],
+            read_hook_fixture("pre-tool-apply-patch.json"),
+        )
+        shell_args = run_guard(
+            ["policy-gate", "--root", str(policy_root), "--hook"],
+            read_hook_fixture("pre-tool-shell-args.json"),
+        )
+        unknown = run_guard(
+            ["policy-gate", "--root", str(policy_root), "--hook", "--debug"],
+            read_hook_fixture("pre-tool-unknown.json"),
+        )
 
         publish_root = make_publish_repo(Path(tmp) / "publish")
         git_commit(publish_root, "one.txt", "one\n", "one")
@@ -1449,8 +1465,36 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
     assert "immutable path" in immutable.stderr
     assert protected.returncode == 1
     assert "protected command" in protected.stderr
+    assert edit.returncode == 1
+    assert "immutable path" in edit.stderr
+    assert patch.returncode == 1
+    assert "immutable path" in patch.stderr
+    assert shell_args.returncode == 1
+    assert "protected command" in shell_args.stderr
+    assert unknown.returncode == 0, unknown.stderr
+    assert json.loads(unknown.stdout) == {"paths": [], "commands": []}
     assert publish.returncode == 1
     assert "fragmented history" in publish.stderr
+
+
+def test_policy_gate_debug_reports_paths_and_commands():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=["secrets/**"], protectedCommands=["git reset --hard"])
+        payload = json.dumps(
+            {
+                "tool_input": {
+                    "patch": "*** Begin Patch\n*** Update File: secrets/token.txt\n@@\n-old\n+new\n*** End Patch\n",
+                    "args": ["git", "reset", "--hard", "HEAD"],
+                }
+            }
+        )
+        result = run_guard(["policy-gate", "--root", str(root), "--hook", "--debug"], payload)
+
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {"paths": ["secrets/token.txt"], "commands": ["git reset --hard HEAD"]}
+    assert "immutable path" in result.stderr
+    assert "protected command" in result.stderr
 
 
 def test_user_prompt_submit_triggers_for_self_evolution_runs():

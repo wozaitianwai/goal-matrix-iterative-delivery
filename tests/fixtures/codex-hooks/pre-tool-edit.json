@@ -1,0 +1,6 @@
+{
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "secrets/token.txt"
+  }
+}

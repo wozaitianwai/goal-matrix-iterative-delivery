@@ -1084,6 +1084,8 @@ def collect_payload_commands(raw):
     def walk(value, key=""):
         if isinstance(value, str) and command_field_hint(key):
             commands.append(value)
+        elif isinstance(value, list) and key.lower() in {"args", "argv"} and all(isinstance(item, str) for item in value):
+            commands.append(" ".join(value))
         elif isinstance(value, list):
             for item in value:
                 walk(item, key)
@@ -1156,10 +1158,18 @@ def policy_gate_problems(root, raw):
     return problems
 
 
-def policy_gate(root, hook_mode=False):
+def policy_gate_debug(root, raw):
+    return {"paths": collect_payload_paths(raw, root), "commands": collect_payload_commands(raw)}
+
+
+def policy_gate(root, hook_mode=False, debug=False):
     raw = sys.stdin.read()
     if hook_mode and not raw.strip():
+        if debug:
+            print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
         return 0
+    if debug:
+        print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
     problems = policy_gate_problems(root, raw)
     for problem in problems:
         print(f"policy gate blocked: {problem}", file=sys.stderr)
@@ -1467,6 +1477,7 @@ def main():
     policy_gate_parser = sub.add_parser("policy-gate")
     policy_gate_parser.add_argument("--root", default=".")
     policy_gate_parser.add_argument("--hook", action="store_true")
+    policy_gate_parser.add_argument("--debug", action="store_true")
     gate_parser = sub.add_parser("gate")
     gate_parser.add_argument("--phase", choices=("design_gate", "review_gate"), required=True)
     gate_parser.add_argument("--root", default=".")
@@ -1493,7 +1504,7 @@ def main():
     if args.cmd == "publish-gate":
         return publish_gate(args.root, args.hook)
     if args.cmd == "policy-gate":
-        return policy_gate(args.root, args.hook)
+        return policy_gate(args.root, args.hook, args.debug)
     if args.cmd == "gate":
         verify_command = args.verify[1:] if args.verify and args.verify[:1] == ["--"] else args.verify
         return gate_decision(args.phase, gate_input(args.root, args.file), verify_command, args.root)

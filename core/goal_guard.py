@@ -539,6 +539,18 @@ def read_active_goal(root):
     return None
 
 
+def read_active_goal_value(root, field):
+    path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
+    if not path.is_file():
+        return ""
+    pattern = re.compile(rf"^{re.escape(field)}:\s*(.+)$", re.IGNORECASE)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip().strip("`")
+    return ""
+
+
 def fast_lane_available(root):
     active_path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
     return active_path.is_file() and read_active_goal(root) is None
@@ -869,6 +881,26 @@ def checkpoint_project(root, verify_command, if_active=False):
         )
     )
     return 0
+
+
+def active_verify(root):
+    root = Path(root)
+    if not read_active_goal(root):
+        print("active verification blocked: no active goal", file=sys.stderr)
+        return 1
+    verification = read_active_goal_value(root, "Verification")
+    if not verification:
+        print("active verification blocked: missing Verification field", file=sys.stderr)
+        return 1
+    try:
+        verify_command = shlex.split(verification)
+    except ValueError as exc:
+        print(f"active verification blocked: cannot parse Verification field: {exc}", file=sys.stderr)
+        return 1
+    if is_metadata_only_verification(verify_command):
+        print("active verification blocked: metadata-only verification is not allowed", file=sys.stderr)
+        return 1
+    return subprocess.run(verify_command, cwd=root, text=True).returncode
 
 
 def toml_block(text, header):
@@ -1383,6 +1415,8 @@ def main():
     init_parser.add_argument("--type", choices=INITIALIZATION_TYPES, default="new-project")
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--root", default=".")
+    active_verify_parser = sub.add_parser("active-verify")
+    active_verify_parser.add_argument("--root", default=".")
     doctor_parser = sub.add_parser("doctor")
     doctor_parser.add_argument("--root", default=".")
     doctor_parser.add_argument("--fix", action="store_true")
@@ -1411,6 +1445,8 @@ def main():
         return checkpoint_project(args.root, verify_command, args.if_active)
     if args.cmd == "status":
         return status_project(args.root)
+    if args.cmd == "active-verify":
+        return active_verify(args.root)
     if args.cmd == "doctor":
         return doctor_project(args.root, args.fix)
     if args.cmd == "publish-gate":

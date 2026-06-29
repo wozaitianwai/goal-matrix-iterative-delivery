@@ -1468,10 +1468,38 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " hook PreToolUse" in pre_tool_command
     assert " checkpoint --if-active --root . --" not in stop_command
     assert " gate --phase review_gate --root . --verify" in stop_command
-    assert "scripts/loop_verify.py" in stop_command
+    assert " active-verify --root ." in stop_command
+    assert "scripts/loop_verify.py" not in stop_command
     assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
     assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
     assert " hook Stop" in stop_command
+
+
+def test_active_verify_runs_target_active_goal_verification_command():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Verify target
+Initialization type: iteration
+Policy impact: none
+Touched paths: verified.txt
+Delivery boundary: target verification
+Skipped: none
+Truth source: verified.txt
+Verification: {sys.executable} -c "from pathlib import Path; Path('verified.txt').write_text('ok')"
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+
+        result = run_guard(["active-verify", "--root", tmp])
+        verified = (root / "verified.txt").read_text(encoding="utf-8") if (root / "verified.txt").is_file() else ""
+
+    assert result.returncode == 0, result.stderr
+    assert verified == "ok"
 
 
 def test_stop_hook_preserves_review_gate_failure():

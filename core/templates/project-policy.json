@@ -18,6 +18,11 @@
     "git reset --hard",
     "drop database"
   ],
+  "publishActionPatterns": [
+    "npm publish",
+    "twine upload",
+    "gh release"
+  ],
   "truthSources": [
     "tests",
     "build",

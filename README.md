@@ -58,7 +58,7 @@ python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 
 `scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
 
-`loop-governance.json` is the machine gate source for approval and publish policy. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
+`.goal-matrix/project-policy.json` is the target project runtime policy source for path, command, and publish-action gates. `loop-governance.json` is only the plugin repository autonomy policy used by this repo's own CI/static governance checks. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
 
 Fast Lane is available when there is no active goal and the request is a trivial typo, copy, or single-function edit. It keeps policy/publish gates and focused verification, but skips goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes use the normal loop.
 
@@ -91,13 +91,13 @@ Webhook presets are included for generic, Slack, Discord, Feishu, DingTalk, and 
 
 ## Publish Gate
 
-The Codex `PreToolUse` hook runs this gate before `git push`:
+The Codex `PreToolUse` hook runs this gate before `git push` and commands matching `publishActionPatterns` such as `npm publish`, `twine upload`, and `gh release`:
 
 ```bash
 python3 core/goal_guard.py publish-gate --root .
 ```
 
-It fails when the branch has more than one local commit ahead of its upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` when the user explicitly wants to preserve the history.
+It fails when the worktree is dirty, an active goal is still open, checkpoint evidence is missing, upstream is missing or behind, or the branch has more than one local commit ahead of upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` only when the user explicitly wants to preserve fragmented local commits.
 
 The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy. If a hook already exists, it is chained from `.git/hooks/pre-push.goal-matrix.previous`; restore it by moving that file back to `.git/hooks/pre-push`.
 

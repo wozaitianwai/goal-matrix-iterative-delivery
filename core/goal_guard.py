@@ -266,6 +266,20 @@ def read_project_policy(root):
     return policy if isinstance(policy, dict) else {}
 
 
+def read_plugin_governance(root):
+    root = Path(root)
+    if not (root / ".codex-plugin" / "plugin.json").is_file():
+        return {}
+    governance_path = root / "loop-governance.json"
+    if not governance_path.is_file():
+        return {}
+    try:
+        governance = json.loads(governance_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return governance if isinstance(governance, dict) else {}
+
+
 def strict_triggering_enabled(root):
     policy = read_project_policy(root)
     trigger_mode = str(policy.get("triggerMode", "")).lower()
@@ -1224,12 +1238,39 @@ def hook_is_git_push(raw):
     return bool(re.search(r"\bgit\s+push\b", text))
 
 
+def runtime_publish_patterns(root):
+    patterns = []
+    for source in (read_project_policy(root), read_plugin_governance(root)):
+        for pattern in source.get("publishActionPatterns", []):
+            if pattern and pattern not in patterns:
+                patterns.append(pattern)
+    return patterns
+
+
+def hook_is_publish_action(raw, root):
+    if hook_is_git_push(raw):
+        return True
+    patterns = runtime_publish_patterns(root)
+    if not patterns:
+        return False
+    text = hook_payload_text(raw).lower()
+    for pattern in patterns:
+        pattern_lower = pattern.lower().strip()
+        if pattern_lower and pattern_lower in text:
+            return True
+    return any(
+        protected_command_matches(command, pattern)
+        for command in collect_payload_commands(raw)
+        for pattern in patterns
+    )
+
+
 def publish_gate(root, hook_mode=False):
     raw = sys.stdin.read()
-    if hook_mode and not hook_is_git_push(raw):
+    root = Path(root)
+    if hook_mode and not hook_is_publish_action(raw, root):
         return 0
 
-    root = Path(root)
     inside = git_output(root, "rev-parse", "--is-inside-work-tree")
     if inside.returncode:
         print("publish gate blocked: not inside a git worktree", file=sys.stderr)

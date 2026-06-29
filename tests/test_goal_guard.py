@@ -153,6 +153,7 @@ def test_project_policy_template_is_valid_json():
     assert policy["triggerMode"] == "narrow"
     assert "immutablePaths" in policy
     assert "approvalRequiredPaths" in policy
+    assert "publishActionPatterns" in policy
     assert "truthSources" in policy
     assert "verification" in policy["completionRequires"]
     assert "truthSource" in policy["completionRequires"]
@@ -514,6 +515,22 @@ def test_readmes_document_native_pre_push_hook_restore_path():
     for path in ("README.md", "README.zh.md", "adapters/codex/README.md"):
         text = read_text(path)
         assert "pre-push.goal-matrix.previous" in text
+
+
+def test_runtime_policy_source_docs_are_consistent():
+    english = read_text("README.md")
+    chinese = read_text("README.zh.md")
+    protocol = read_text("core/protocol.md")
+    threat_model = read_text("docs/threat-model.md")
+
+    assert ".goal-matrix/project-policy.json" in english
+    assert "target project runtime policy source" in english
+    assert "plugin repository autonomy" in english
+    assert "目标项目运行时 policy 真源" in chinese
+    assert "插件仓库自治" in chinese
+    assert "target project runtime policy source" in protocol
+    assert "plugin repository autonomy" in protocol
+    assert "publishActionPatterns" in threat_model
 
 
 def test_release_install_docs_are_reproducible_and_changelog_backed():
@@ -2255,6 +2272,32 @@ def test_publish_gate_hook_rejects_push_with_fragmented_history():
 
     assert result.returncode == 1
     assert "fragmented history" in result.stderr
+
+
+def test_publish_gate_hook_rejects_publish_action_patterns():
+    for command in ("npm publish", "gh release create v1.2.3"):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_publish_repo(Path(tmp))
+            write_file(
+                repo / ".goal-matrix" / "project-policy.json",
+                json.dumps({"publishActionPatterns": ["npm publish", "gh release"]}, indent=2) + "\n",
+            )
+            subprocess.run(["git", "add", ".goal-matrix"], cwd=repo, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "policy"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            git_commit(repo, "one.txt", "one\n", "one")
+            git_commit(repo, "two.txt", "two\n", "two")
+            payload = json.dumps({"tool_input": {"cmd": command}})
+
+            result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
+
+        assert result.returncode == 1, command
+        assert "fragmented history" in result.stderr
 
 
 def test_status_command_reports_active_and_next_loop():

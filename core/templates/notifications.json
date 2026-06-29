@@ -1,0 +1,84 @@
+{
+  "enabled": false,
+  "codexPopup": {
+    "enabled": true,
+    "events": [
+      "session_start",
+      "agent_end"
+    ]
+  },
+  "webhook": {
+    "enabled": false,
+    "events": [
+      "session_start",
+      "agent_end"
+    ],
+    "provider": "generic",
+    "urlEnv": "GOAL_MATRIX_WEBHOOK_URL",
+    "presets": {
+      "generic": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "text": "{{message}}"
+        }
+      },
+      "slack": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "text": "{{message}}"
+        }
+      },
+      "discord": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "content": "{{message}}"
+        }
+      },
+      "feishu": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msg_type": "text",
+          "content": {
+            "text": "{{message}}"
+          }
+        }
+      },
+      "dingtalk": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msgtype": "text",
+          "text": {
+            "content": "{{message}}"
+          }
+        }
+      },
+      "wechat_work": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "msgtype": "text",
+          "text": {
+            "content": "{{message}}"
+          }
+        }
+      }
+    }
+  }
+}

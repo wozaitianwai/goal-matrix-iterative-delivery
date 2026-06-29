@@ -30,6 +30,12 @@ The adapter stays thin. Workflow rules belong in `core/protocol.md`; Codex files
 
 Lifecycle hooks inject context and can block unsafe publish actions. A visible Codex goal still requires the agent to call `create_goal`.
 
+## Project Notifications
+
+The Codex extension registers `/goal-notify`. It uses `ctx.ui.notify` for Codex popup notifications; it does not send chat messages for notification status.
+
+Project initialization creates notification settings and gitignores the local secret override file. Common webhook payload presets are available through `/goal-notify templates`; enable webhook delivery in project config and keep real URLs in the local override file or `GOAL_MATRIX_WEBHOOK_URL`.
+
 ## Local Package Check
 
 ```bash

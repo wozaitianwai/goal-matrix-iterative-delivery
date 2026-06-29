@@ -7,6 +7,7 @@
 !.agents/plugins/marketplace.json
 .codex/
 .goal-matrix/
+.goal-matrix/notifications.local.json
 /plugins/
 docs/workflows/
 

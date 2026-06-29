@@ -13,6 +13,7 @@ ENV = {"PYTHONPYCACHEPREFIX": str(CACHE_ROOT)}
 CHECKS = (
     ("loop audit", [sys.executable, "scripts/loop_audit.py", "--root", ".", "--json"]),
     ("package validation", [sys.executable, "scripts/validate_plugin_package.py", "--root", "."]),
+    ("pi-extension tests", ["node", "--test", "pi-extension/test/extension.test.js"]),
     (
         "py_compile",
         [

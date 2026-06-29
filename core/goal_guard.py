@@ -73,8 +73,12 @@ TEMPLATE_FILES = (
     ("checks.md", "checks.md"),
     ("decisions.md", "decisions.md"),
     ("loop-note.md", "loop-note.md"),
+    ("notifications.json", "notifications.json"),
     ("goal-matrix.md", "goals/goal-matrix.md"),
     ("active-goal.md", "goals/active-goal.md"),
+)
+GITIGNORE_LINES = (
+    ".goal-matrix/notifications.local.json",
 )
 LOOP_STAGES = (
     "project_initialization",
@@ -112,7 +116,7 @@ PHASE_BOUNDARIES = {
 EVENT_CONTEXTS = {
     "PreToolUse": "Before tool use: perform one loop step only; confirm active goal, policy impact, and write boundary before changes.",
     "PostToolUse": "After tool use: record one loop step result; if it was verification, connect output to the active goal truth source.",
-    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Next loop: select next pending goal and continue with it before final completion, mark blocked, or state no remaining goal.",
+    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Next loop: select next pending goal and continue with it before final completion, keep the active goal open with a concrete next action when prerequisites are recoverable, or state no remaining goal.",
 }
 
 BASE_CONTEXT = """GOAL MATRIX DELIVERY ACTIVE
@@ -182,6 +186,7 @@ Goal self-correction:
 - If Active goal / Delivery boundary / Skipped / Verification / Development flow is missing, stop and add it.
 - If the active goal is too broad, split it and execute the smallest useful slice.
 - If truth source or verification evidence is missing, do not claim completion.
+- If an external prerequisite is recoverable, such as token, cookies, login, or service restart, keep the active goal open with the next action instead of marking it blocked.
 
 Lifecycle CLI:
 - goal_guard.py classify: classify a prompt as new-project, iteration, bugfix, or legacy-baseline.
@@ -409,6 +414,22 @@ def write_if_missing(path, text):
     return True
 
 
+def ensure_gitignore_lines(root):
+    path = Path(root) / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    lines = existing.splitlines()
+    changed = False
+    for line in GITIGNORE_LINES:
+        if line not in lines:
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            existing += line + "\n"
+            changed = True
+    if changed:
+        path.write_text(existing, encoding="utf-8")
+    return changed
+
+
 def init_project(root, initialization_type):
     root = Path(root)
     matrix_dir = root / ".goal-matrix"
@@ -437,6 +458,11 @@ def init_project(root, initialization_type):
             created.append(f".goal-matrix/{relative_dest}")
         else:
             skipped.append(f".goal-matrix/{relative_dest}")
+
+    if ensure_gitignore_lines(root):
+        created.append(".gitignore notification ignore")
+    else:
+        skipped.append(".gitignore notification ignore")
 
     problems = audit_project(root)
     if problems:
@@ -914,7 +940,7 @@ def gate_decision(phase, text, verify_command=None, root="."):
             return emit_gate("checkpoint", "review gate passed")
         if not has_verification_evidence:
             return emit_gate("execute", "missing verification evidence")
-        return emit_gate("blocked", "missing reviewer decision")
+        return emit_gate("execute", "missing reviewer decision; keep active goal open")
 
     return emit_gate("blocked", "unsupported gate phase")
 

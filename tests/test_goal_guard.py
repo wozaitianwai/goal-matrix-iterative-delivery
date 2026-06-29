@@ -106,6 +106,7 @@ def test_core_templates_exist():
         "core/templates/goal-matrix.md",
         "core/templates/active-goal.md",
         "core/templates/loop-note.md",
+        "core/templates/notifications.json",
     ):
         assert (ROOT / path).is_file(), path
 
@@ -151,6 +152,25 @@ def test_project_policy_template_is_valid_json():
     assert "checkpoint" in policy["completionRequires"]
 
 
+def test_notification_template_uses_codex_popup_and_common_webhook_presets():
+    notifications = json.loads(read_text("core/templates/notifications.json"))
+
+    assert notifications["enabled"] is False
+    assert notifications["codexPopup"]["enabled"] is True
+    assert notifications["webhook"]["enabled"] is False
+    assert "session_start" in notifications["webhook"]["events"]
+    assert notifications["webhook"]["urlEnv"] == "GOAL_MATRIX_WEBHOOK_URL"
+    assert set(notifications["webhook"]["presets"]) >= {
+        "generic",
+        "slack",
+        "discord",
+        "feishu",
+        "dingtalk",
+        "wechat_work",
+    }
+    assert "https://" not in json.dumps(notifications)
+
+
 def test_goal_matrix_initialization_is_project_local():
     with tempfile.TemporaryDirectory() as tmp:
         init = run_guard(["init", "--root", tmp, "--type", "iteration"])
@@ -158,6 +178,20 @@ def test_goal_matrix_initialization_is_project_local():
 
     assert init.returncode == 0, init.stderr
     assert audit.returncode == 0, audit.stderr
+
+
+def test_goal_matrix_initialization_adds_notifications_and_gitignore():
+    with tempfile.TemporaryDirectory() as tmp:
+        init = run_guard(["init", "--root", tmp, "--type", "iteration"])
+        notification_path = Path(tmp) / ".goal-matrix" / "notifications.json"
+        gitignore = (Path(tmp) / ".gitignore").read_text(encoding="utf-8")
+        notification_text = notification_path.read_text(encoding="utf-8") if notification_path.is_file() else ""
+        notification_exists = notification_path.is_file()
+
+    assert init.returncode == 0, init.stderr
+    assert notification_exists
+    assert ".goal-matrix/notifications.local.json" in gitignore
+    assert "GOAL_MATRIX_WEBHOOK_URL" in notification_text
 
 
 def test_manifest_wires_skill_and_hooks():
@@ -235,6 +269,8 @@ def test_adapter_directories_exist():
         "adapters/codex/hooks/codex-lifecycle-hooks.json",
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md",
         "assets/icon.png",
+        "pi-extension/index.js",
+        "pi-extension/package.json",
         "scripts/install_adapter.py",
         "scripts/validate_plugin_package.py",
     ):
@@ -1047,6 +1083,8 @@ def test_stop_hook_demands_next_loop_handoff():
     assert "Next loop:" in context
     assert "select next pending goal" in context
     assert "continue with it before final completion" in context
+    assert "mark blocked" not in context
+    assert "keep the active goal open" in context
 
 
 def test_user_prompt_submit_triggers_for_self_evolution_runs():
@@ -1900,6 +1938,16 @@ def test_gate_command_returns_execute_for_failed_review():
     decision = json.loads(result.stdout)
     assert decision["next"] == "execute"
     assert "review requested changes" in decision["reason"]
+
+
+def test_gate_command_keeps_goal_open_when_reviewer_decision_is_missing():
+    text = "Verified with tests. External prerequisite missing: refresh qwen token/cookies."
+    result = run_guard(["gate", "--phase", "review_gate"], text)
+
+    assert result.returncode == 1
+    decision = json.loads(result.stdout)
+    assert decision["next"] == "execute"
+    assert "missing reviewer decision" in decision["reason"]
 
 
 def test_gate_command_rejects_review_incantation_without_machine_verification():

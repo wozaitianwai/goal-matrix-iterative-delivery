@@ -65,6 +65,7 @@ project initialization status -> active goal -> failing check -> minimal change 
 
 - Show whether `.goal-matrix/project-policy.json` is initialized before the first child goal.
 - A self-evolution run keeps one active child goal at a time, but continues after each verified checkpoint by promoting the next pending goal; stop only at budget, blocker, or no pending goal.
+- Recoverable external prerequisites, such as token, cookies, login, or service restart, keep the active goal open with a concrete next action instead of becoming a blocked goal.
 - Use small local checkpoint commits only after verified child goals.
 - Before push, squash or merge fragmented local commits into readable history unless the user asks to preserve them.
 - `PreToolUse` must run `goal_guard.py publish-gate` before `git push` so fragmented history fails closed.
@@ -84,7 +85,7 @@ project_initialization -> work_classification -> design -> design_gate -> execut
 - `PostToolUse`: connect tool output to truth source, verification, or next step.
 - `Stop`: require verification, checkpoint/status evidence, and push history policy before completion.
 - Unclear drafts need `Clarity decision:` before execution, and only one `Active goal:` can be exposed at a time.
-- Completion needs `Next loop:` with the next pending goal, a blocked state, or no remaining goal.
+- Completion needs `Next loop:` with the next pending goal, the still-open active goal's next action, or no remaining goal.
 
 ## User Habits
 

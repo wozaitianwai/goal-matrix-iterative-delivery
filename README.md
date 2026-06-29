@@ -54,6 +54,18 @@ The loop is deliberately small:
 initialize -> classify -> design -> execute -> review -> checkpoint -> next loop
 ```
 
+## Project Notifications
+
+Project initialization also creates optional notification settings. Enable them in the project state, then use the Codex popup command:
+
+```bash
+/goal-notify status
+/goal-notify test
+/goal-notify templates
+```
+
+Webhook presets are included for generic, Slack, Discord, Feishu, DingTalk, and WeChat Work payload shapes. Enable webhook delivery in the project config and put real webhook secrets in the local notification file or `GOAL_MATRIX_WEBHOOK_URL`; the local file is added to `.gitignore`.
+
 ## What The Hooks Enforce
 
 - State the boundary, skipped scope, truth source, and verification before editing.

@@ -21,9 +21,9 @@ project_initialization -> work_classification -> design -> design_gate -> execut
 - `execute`: make the smallest change inside the active-goal boundary.
 - `review_gate`: inspect checks, reviewer findings, and evidence; return to design or execute when they fail.
 - `checkpoint`: update state and commit only verified child-goal work.
-- `design_iteration`: hand off the next pending goal, blocked state, or no remaining goal.
+- `design_iteration`: hand off the next pending goal, a hard blocker, or no remaining goal.
 
-The practical backbone is state on disk. `.goal-matrix` records what was tried, what passed, what is blocked, and what resumes after a restart. Automations, worktrees, connectors, and sub-agents are optional extensions; add them only when state, gates, and checks are already reliable.
+The practical backbone is state on disk. `.goal-matrix` records what was tried, what passed, what remains open, and what resumes after a restart. Automations, worktrees, connectors, and sub-agents are optional extensions; add them only when state, gates, and checks are already reliable.
 
 The review gate separates maker and checker responsibilities. The agent that implements a slice should not be the only evidence that the slice is done; tests, audit output, reviewer findings, or a separate review pass must be able to send the loop back to `design` or `execute`.
 
@@ -35,7 +35,7 @@ python3 core/goal_guard.py gate --phase review_gate < loop-note.md
 python3 core/goal_guard.py gate --phase review_gate --root /path/to/project
 ```
 
-`design_gate` returns `design` when clarity, policy, truth source, or verification plan is missing; otherwise it returns `execute`. `review_gate` returns `execute` for failed review or missing verification, `checkpoint` for verified approved work, and `blocked` when the reviewer decision is missing.
+`design_gate` returns `design` when clarity, policy, truth source, or verification plan is missing; otherwise it returns `execute`. `review_gate` returns `execute` for failed review, missing verification, or missing reviewer decision, and returns `checkpoint` for verified approved work.
 
 When stdin is empty, `gate --root` reads `.goal-matrix/loop-note.md`.
 
@@ -130,7 +130,7 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 
 Unclear drafts require a `Clarity decision:` note before execution. A loop may expose only one `Active goal:` at a time.
 
-Completion requires a `Next loop:` handoff: select the next pending goal, mark the loop blocked, or state that no goal remains.
+Completion requires a `Next loop:` handoff: select the next pending goal, keep the active goal open with a concrete next action when prerequisites are recoverable, or state that no goal remains.
 
 ## Truth source
 
@@ -140,7 +140,7 @@ UI refresh, optimistic state, or "looks good" is not enough without a backing tr
 
 ## Checkpoint
 
-Completion requires verification, truth-source evidence, and an updated matrix/status note. If verification cannot run, state why and keep the goal open or blocked.
+Completion requires verification, truth-source evidence, and an updated matrix/status note. If verification cannot run because of a recoverable external prerequisite, such as token, cookies, login, or service restart, state the next action and keep the goal open.
 
 ## Adapter rule
 

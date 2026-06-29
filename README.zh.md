@@ -54,6 +54,18 @@ python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 初始化 -> 分类 -> 设计 -> 执行 -> 验收 -> checkpoint -> 下一轮
 ```
 
+## 项目通知
+
+初始化项目时也会创建可选的通知设置。启用项目状态里的通知后，用 Codex 弹窗命令查看：
+
+```bash
+/goal-notify status
+/goal-notify test
+/goal-notify templates
+```
+
+内置 generic、Slack、Discord、飞书、钉钉、企业微信的 webhook payload 模板。需要 webhook 投递时在项目配置里启用，真实 webhook secret 放在本地通知文件或 `GOAL_MATRIX_WEBHOOK_URL`；本地通知文件会写入 `.gitignore`。
+
 ## Hooks 会约束什么
 
 - 动手前写清楚交付边界、跳过内容、真源和验证方式。

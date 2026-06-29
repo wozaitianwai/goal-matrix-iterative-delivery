@@ -16,6 +16,8 @@ ADAPTERS = {
 
 ASSETS = (
     "assets/icon.png",
+    "pi-extension/index.js",
+    "pi-extension/package.json",
     "scripts/install_adapter.py",
     "scripts/validate_plugin_package.py",
     "scripts/loop_audit.py",

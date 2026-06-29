@@ -493,12 +493,12 @@ def test_install_adapter_chains_existing_native_pre_push_hook():
         hook_text = hook.read_text(encoding="utf-8") if hook.is_file() else ""
         previous_exists = previous.is_file()
         previous_text = previous.read_text(encoding="utf-8") if previous.is_file() else ""
+        commit_goal_matrix(target)
         hook_result = subprocess.run(
             [str(hook)],
             cwd=target,
             text=True,
             capture_output=True,
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
         )
         chained_text = (target / "chained-hook.txt").read_text(encoding="utf-8") if (target / "chained-hook.txt").is_file() else ""
 
@@ -2033,6 +2033,8 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     if evidence:
         write_file(repo / ".goal-matrix" / "evidence" / "G1.log", "Goal: G1\nExit code: 0\n")
     subprocess.run(["git", "add", ".goal-matrix"], cwd=repo, check=True, capture_output=True, text=True)
+    if (repo / ".gitignore").exists():
+        subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True, capture_output=True, text=True)
     subprocess.run(
         ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "goal state"],
         cwd=repo,
@@ -2052,6 +2054,105 @@ def test_publish_gate_rejects_fragmented_history_before_push():
 
     assert result.returncode == 1
     assert "fragmented history" in result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_only_skips_fragmented_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+        git_commit(repo, "two.txt", "two\n", "two")
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_still_rejects_dirty_worktree():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+        write_file(repo / "dirty.txt", "dirty\n")
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 1
+    assert "uncommitted changes" in result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_still_rejects_active_goal():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        commit_goal_matrix(repo, active_goal="G2 - Still running")
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 1
+    assert "active goal" in result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_still_rejects_missing_checkpoint_evidence():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        commit_goal_matrix(repo, evidence=False)
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 1
+    assert "missing checkpoint evidence" in result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_still_rejects_missing_upstream():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
+        git_commit(repo, "README.md", "base\n", "base")
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 1
+    assert "missing upstream" in result.stderr
+
+
+def test_publish_gate_allow_fragmented_push_still_rejects_behind_upstream():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        repo = make_publish_repo(root)
+        remote = root / "remote.git"
+        other = root / "other"
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(["git", "clone", str(remote), str(other)], check=True, capture_output=True, text=True)
+        git_commit(other, "remote.txt", "remote\n", "remote")
+        subprocess.run(["git", "push", "origin", branch], cwd=other, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, check=True, capture_output=True, text=True)
+
+        result = run_guard(
+            ["publish-gate", "--root", str(repo)],
+            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
+        )
+
+    assert result.returncode == 1
+    assert "remote history not integrated" in result.stderr
 
 
 def test_publish_gate_accepts_single_commit_before_push():

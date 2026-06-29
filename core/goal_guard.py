@@ -1203,16 +1203,10 @@ def publish_gate(root, hook_mode=False):
         print("publish gate blocked: not inside a git worktree", file=sys.stderr)
         return 1
 
-    if truthy_env(ALLOW_FRAGMENTED_PUSH_ENV):
-        return 0
-
     branch = current_branch(root)
     base_ref = publish_base_ref(root, branch)
     if not base_ref:
-        print(
-            f"publish gate blocked: missing upstream; set upstream or {ALLOW_FRAGMENTED_PUSH_ENV}=1",
-            file=sys.stderr,
-        )
+        print("publish gate blocked: missing upstream; set upstream before push", file=sys.stderr)
         return 1
 
     counts = git_output(root, "rev-list", "--left-right", "--count", f"HEAD...{base_ref}")
@@ -1225,7 +1219,7 @@ def publish_gate(root, hook_mode=False):
     problems = publish_state_problems(root)
     if behind:
         problems.append(f"remote history not integrated: {behind} commit(s) behind {base_ref}")
-    if ahead > 1:
+    if ahead > 1 and not truthy_env(ALLOW_FRAGMENTED_PUSH_ENV):
         problems.append(
             f"fragmented history: {ahead} commits ahead of {base_ref}; "
             f"squash or merge before push, or set {ALLOW_FRAGMENTED_PUSH_ENV}=1"

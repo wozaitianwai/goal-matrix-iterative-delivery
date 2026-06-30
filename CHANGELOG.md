@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3+codex.20260630011248 - 2026-06-30
+
+- Bump the plugin/package version after slimming the public README pair, Codex skill prompt, and loop state docs.
+- Keep install docs pinned to the latest released tag `v0.1.2-codex.1`; this entry records the pushed package version, not a new release tag.
+
 ## v0.1.2-codex.1 - 2026-06-29
 
 - Publish the static-review guardrail fixes under plugin version `0.1.2+codex.20260629215745`.

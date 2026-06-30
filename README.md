@@ -6,18 +6,7 @@
 
 > English | [中文](README.zh.md)
 
-Keep Codex work honest: one goal matrix, one active slice, one proof before handoff.
-
-Use it when a request is too broad for a single edit and you need the agent to keep scope, evidence, and restart state visible.
-
-## Why Use It
-
-| Problem | Guardrail |
-| --- | --- |
-| Work expands while nobody notices | One active goal at a time |
-| "Done" is claimed from vibes | Completion needs a truth source |
-| Restarts lose context | Project-local `.goal-matrix/` state |
-| Push history gets noisy | Publish gate requires a clean branch |
+Keep Codex work honest: one active slice, one truth source, one proof before handoff.
 
 ## Install
 
@@ -30,23 +19,23 @@ codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 
 Use a tagged release for reproducible installs. The moving development branch is only for unreleased testing.
 
-Then trust the plugin hooks in Codex Desktop and restart Codex once so the lifecycle hooks load.
+Trust the plugin hooks in Codex Desktop and restart once.
 
 ## Initialize A Project
 
-Create goal-matrix state for one project:
+Create project-local state:
 
 ```bash
 python3 scripts/install_adapter.py codex --target /path/to/project
 ```
 
-This writes only `.goal-matrix/` files in the target project. It does not edit Codex config.
-
-To also enforce publish policy for shell or manual pushes, install the native git hook:
+Optional native push guard:
 
 ```bash
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
+
+Setup writes `.goal-matrix/` files only. If a native hook already exists, it is preserved as `.git/hooks/pre-push.goal-matrix.previous`.
 
 ## Daily Loop
 
@@ -56,56 +45,37 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
-For broad review/backlog prompts, `start` creates one scheduler/acceptance active goal plus multiple Pending child goals before implementation. Child rows include dependency, risk, and parallel-safety metadata; the main thread still verifies and checkpoints each child goal one at a time.
-
-`scripts/loop_audit.py --json` reports `runLogNeedsSummary` when `loop-run-log.md` grows past 500 lines; run a summary/pruning child goal before continuing long-loop work.
-
-`.goal-matrix/project-policy.json` is the target project runtime policy source for path, command, and publish-action gates. `loop-governance.json` is only the plugin repository autonomy policy used by this repo's own CI/static governance checks. `STATE.md` is human-readable only; it must not repeat approval envs, protected paths, or publish patterns. Audit reports `stateGovernanceDuplication` when human state copies machine-owned policy values.
-
-`.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status after `start` or `checkpoint`. Markdown files under `.goal-matrix/goals/` remain the human-readable view.
-
-Approval-required paths accept scoped payload approvals only when the approval names the active goal, covers the path, has a future `expiresAt`, and includes a reason. `GOAL_MATRIX_APPROVED=1` remains an explicit local emergency override, not a shell default.
-
-Fast Lane is available when there is no active goal and the request is a trivial typo, copy, or single-function edit. It keeps policy/publish gates and focused verification, but skips goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes use the normal loop.
-
-The loop is deliberately small:
+The loop stays small:
 
 ```text
 initialize -> classify -> design -> execute -> review -> checkpoint -> next loop
 ```
 
-## Project Notifications
+Broad prompts can create pending child goals, but the main thread still verifies and checkpoints one child goal at a time. Fast Lane is only for trivial typo, copy, or single-function edits with no active goal.
 
-Project initialization also creates optional notification settings. Enable them in the project state, then use the Codex popup command:
+Hooks do not create the visible Codex sidebar goal; call `create_goal` when visible tracking matters.
 
-```bash
-/goal-notify status
-/goal-notify test
-/goal-notify templates
-```
+## Runtime Boundaries
 
-The command is loaded from the packaged `pi.extensions` entry and uses Codex `ctx.ui.notify`; it is not a hook log or chat-message notification.
-
-Webhook presets are included for generic, Slack, Discord, Feishu, DingTalk, and WeChat Work payload shapes. Enable webhook delivery in the project config and put real webhook secrets in the local notification file or `GOAL_MATRIX_WEBHOOK_URL`; the local file is added to `.gitignore`.
-
-## What The Hooks Enforce
-
-- State the boundary, skipped scope, truth source, and verification before editing.
-- Execute one active goal per loop.
-- Prefer existing project code and host behavior before adding machinery.
-- Block unsafe publish actions; hooks guide the agent, but they do not run hidden work or push code.
+- `.goal-matrix/project-policy.json` is the target project runtime policy source.
+- `loop-governance.json` is plugin repository autonomy for this repo's own checks.
+- `.goal-matrix/state.json` is machine state; Markdown goal files are the human view.
+- Hooks guide/block; they do not run hidden work or push code.
+- Codex lifecycle adapter is the only lifecycle adapter in this package.
 
 ## Publish Gate
 
-The Codex `PreToolUse` hook runs this gate before `git push` and commands matching `publishActionPatterns` such as `npm publish`, `twine upload`, and `gh release`:
+Codex `PreToolUse` runs this gate before `git push` and configured publish commands:
 
 ```bash
 python3 core/goal_guard.py publish-gate --root .
 ```
 
-It fails when the worktree is dirty, an active goal is still open, checkpoint evidence is missing, upstream is missing or behind, or the branch has more than one local commit ahead of upstream. Squash or merge first, or set `GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH=1` only when the user explicitly wants to preserve fragmented local commits.
+It fails on dirty worktrees, open active goals, missing checkpoint evidence, missing or behind upstream, or more than one local commit ahead. Squash or merge first unless the user explicitly wants fragmented local commits preserved.
 
-The optional native `pre-push` hook runs the same gate, so direct shell pushes use the same policy. If a hook already exists, it is chained from `.git/hooks/pre-push.goal-matrix.previous`; restore it by moving that file back to `.git/hooks/pre-push`.
+## Notifications
+
+Project setup creates optional notification settings. Use `/goal-notify status`, `/goal-notify test`, or `/goal-notify templates`; webhook secrets stay local or in `GOAL_MATRIX_WEBHOOK_URL`.
 
 ## Package Checks
 
@@ -120,8 +90,6 @@ This project is open source under the [MIT License](LICENSE). You may use, modif
 
 ## Boundaries
 
-Lifecycle hooks inject context into the model. UserPromptSubmit does not run `start` or write `.goal-matrix` state by default; use `goal_guard.py start --root .` only after explicit start/checkpoint/create-goal intent. Hooks also do not create the visible Codex sidebar goal by themselves. When a visible goal is needed, the agent must explicitly call `create_goal`.
+UserPromptSubmit does not run `start`.
 
-Codex is the only lifecycle adapter in this package. Add another adapter only when this repo contains real hook wiring for that host.
-
-This plugin is not a background job system and not a project management platform. It makes engineering loops explicit and verifiable inside Codex.
+This plugin is not a background job system and not a project management platform. It only makes Codex engineering loops explicit and verifiable.

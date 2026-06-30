@@ -23,6 +23,15 @@ def git_lines(root, *args):
     return [line for line in result.stdout.splitlines() if line]
 
 
+def git_text(root, ref, path):
+    result = subprocess.run(
+        ["git", "-C", str(root), "show", f"{ref}:{path}"],
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
 def changed_files(root):
     paths = set(git_lines(root, "diff", "--name-only", "HEAD", "--"))
     paths.update(git_lines(root, "ls-files", "--others", "--exclude-standard"))
@@ -33,8 +42,38 @@ def changed_files(root):
     return git_lines(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
 
 
+def json_text(text):
+    try:
+        value = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def matches(path, patterns):
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
+def package_version_only_bump(root, path):
+    if path != "package.json":
+        return False
+    previous_ref = "HEAD" if path in git_lines(root, "diff", "--name-only", "HEAD", "--") else "HEAD^"
+    previous = json_text(git_text(root, previous_ref, path))
+    current_path = root / path
+    current = json_text(current_path.read_text(encoding="utf-8")) if current_path.is_file() else {}
+    if not previous or not current:
+        return False
+    version = current.get("version")
+    previous_without_version = {key: value for key, value in previous.items() if key != "version"}
+    current_without_version = {key: value for key, value in current.items() if key != "version"}
+    if not version or previous.get("version") == version or previous_without_version != current_without_version:
+        return False
+    manifest_path = root / ".codex-plugin" / "plugin.json"
+    if not manifest_path.is_file():
+        return False
+    manifest = json_text(manifest_path.read_text(encoding="utf-8"))
+    changelog = root / "CHANGELOG.md"
+    return manifest.get("version") == version and changelog.is_file() and version in changelog.read_text(encoding="utf-8")
 
 
 def has_approval(policy):
@@ -72,7 +111,11 @@ def main():
     for path in changed_files(root):
         if matches(path, policy.get("blockedPaths", [])):
             problems.append(f"{path} is blocked by governance policy")
-        if matches(path, policy.get("approvalRequiredPaths", [])) and not approved:
+        if (
+            matches(path, policy.get("approvalRequiredPaths", []))
+            and not approved
+            and not package_version_only_bump(root, path)
+        ):
             problems.append(f"{path} requires approval via {policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)}")
         if publish_action_changed(root, path, policy.get("publishActionPatterns", [])) and not approved:
             problems.append(f"{path} publish action requires approval")

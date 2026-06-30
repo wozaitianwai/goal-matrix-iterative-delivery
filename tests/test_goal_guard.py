@@ -900,6 +900,35 @@ def test_governance_blocks_approval_required_paths_without_approval():
     assert approved.returncode == 0, approved.stderr
 
 
+def test_governance_allows_package_version_only_bump_without_approval():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", json.dumps({"name": "demo", "version": "0.1.0"}) + "\n")
+        write_file(root / ".codex-plugin" / "plugin.json", json.dumps({"version": "0.1.0"}) + "\n")
+        write_file(root / "CHANGELOG.md", "# Changelog\n\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "baseline"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        write_file(root / "package.json", json.dumps({"name": "demo", "version": "0.1.1"}) + "\n")
+        write_file(root / ".codex-plugin" / "plugin.json", json.dumps({"version": "0.1.1"}) + "\n")
+        write_file(root / "CHANGELOG.md", "# Changelog\n\n## 0.1.1\n\n- Version bump.\n")
+        result = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_loop_verify_keeps_approval_env_out_of_non_governance_checks():
     code = (
         "import json, scripts.loop_verify as loop_verify; "

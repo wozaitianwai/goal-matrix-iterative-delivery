@@ -818,6 +818,16 @@ def broad_prompt_items(prompt):
     return items if len(items) >= 2 else []
 
 
+def wants_self_evolution(prompt):
+    return bool(
+        re.search(
+            r"(开始|继续)\s*(自我)?\s*进化|连续\s*迭代|自动\s*迭代|self[-\s]?evolution|auto[-\s]?iterat",
+            prompt_text(prompt),
+            re.IGNORECASE,
+        )
+    )
+
+
 def goal_id_after(goal_id, offset):
     match = re.match(r"G(\d+)$", goal_id)
     return f"G{int(match.group(1)) + offset}" if match else f"{goal_id}.{offset}"
@@ -840,15 +850,57 @@ def start_project(root, prompt):
 
     goal_id = next_goal_id(goals)
     items = broad_prompt_items(prompt)
+    self_evolution_seed = False
+    if not items and wants_self_evolution(prompt):
+        self_evolution_seed = True
+        items = [
+            {
+                "title": "Design next evolution goal batch",
+                "risk": "P1",
+                "engineering_slice": "Turn current loop evidence into concrete pending evolution goals",
+                "truth_source": "start command status readback",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+            },
+            {
+                "title": "Execute highest-priority evolution goal",
+                "risk": "P1",
+                "engineering_slice": "Implement the first verified goal from the designed batch",
+                "truth_source": "goal-specific verification evidence",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+            },
+            {
+                "title": "Verify loop continues after checkpoint",
+                "risk": "P2",
+                "engineering_slice": "Checkpoint and confirm the next pending goal becomes active",
+                "truth_source": "checkpoint status readback",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+            },
+        ]
     if items:
-        active_goal = f"{goal_id} - Schedule broad prompt delivery"
+        scheduler_title = "Schedule self-evolution backlog" if self_evolution_seed else "Schedule broad prompt delivery"
+        scheduler_slice = (
+            "Create one backlog-seeding goal so self-evolution does not terminate on an empty matrix"
+            if self_evolution_seed
+            else "Classify dependency order and review child outputs before checkpoint"
+        )
+        boundary = (
+            "self-evolution scheduler/acceptance active goal; verify the seeded backlog before checkpoint"
+            if self_evolution_seed
+            else "scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint"
+        )
+        skipped = (
+            "automatic code edits and hardcoded project-specific backlog"
+            if self_evolution_seed
+            else "subagent dispatch and child implementation"
+        )
+        active_goal = f"{goal_id} - {scheduler_title}"
         append_goal_matrix_row(
             goals_dir / "goal-matrix.md",
             goal_id,
-            "Schedule broad prompt delivery",
-            "Classify dependency order and review child outputs before checkpoint",
+            scheduler_title,
+            scheduler_slice,
             "start command status readback",
-            "`python3 core/goal_guard.py status --root .`",
+            "`python3 core/goal_guard.py audit --root .`",
             "none",
             "medium",
             "main thread only",
@@ -861,9 +913,9 @@ def start_project(root, prompt):
                 goals_dir / "goal-matrix.md",
                 child_id,
                 item["title"],
-                f"Implement bounded item: {item['title']}",
-                "item-specific truth source",
-                "item-specific verification",
+                item.get("engineering_slice", f"Subagent candidate: {item['title']}"),
+                item.get("truth_source", "item-specific truth source"),
+                item.get("verification", "item-specific verification"),
                 goal_id,
                 item["risk"],
                 "independent if touched paths do not overlap",
@@ -875,10 +927,10 @@ Active goal: {active_goal}
 Initialization type: iteration
 Policy impact: none
 Touched paths: .goal-matrix/goals/goal-matrix.md, .goal-matrix/goals/active-goal.md
-Delivery boundary: scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint
-Skipped: subagent dispatch and child implementation
+Delivery boundary: {boundary}
+Skipped: {skipped}
 Truth source: `.goal-matrix` status
-Verification: python3 core/goal_guard.py status --root .
+Verification: python3 core/goal_guard.py audit --root .
 Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
             encoding="utf-8",
@@ -967,6 +1019,15 @@ def is_metadata_only_verification(verify_command):
     return False
 
 
+def resolve_guard_verify_command(root, verify_command):
+    resolved = list(verify_command)
+    for index, arg in enumerate(resolved):
+        path = Path(str(arg))
+        if path.name == "goal_guard.py" and not path.is_absolute() and not (Path(root) / path).is_file():
+            resolved[index] = str(Path(__file__).resolve())
+    return resolved
+
+
 def write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result):
     path = Path(root) / ".goal-matrix" / "evidence" / f"{goal_id}.log"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1040,6 +1101,12 @@ def checkpoint_project(root, verify_command, if_active=False):
 def active_verify(root):
     root = Path(root)
     if not read_active_goal(root):
+        if fast_lane_available(root):
+            dirty = git_output(root, "status", "--porcelain")
+            if dirty.returncode == 0 and dirty.stdout.strip():
+                print("active verification blocked: Fast Lane requires focused verification evidence", file=sys.stderr)
+                return 1
+            return 0
         print("active verification blocked: no active goal", file=sys.stderr)
         return 1
     verification = read_active_goal_value(root, "Verification")
@@ -1054,6 +1121,7 @@ def active_verify(root):
     if is_metadata_only_verification(verify_command):
         print("active verification blocked: metadata-only verification is not allowed", file=sys.stderr)
         return 1
+    verify_command = resolve_guard_verify_command(root, verify_command)
     return subprocess.run(verify_command, cwd=root, text=True).returncode
 
 
@@ -1418,7 +1486,51 @@ def hook_payload_text(raw):
     return "\n".join(parts)
 
 
+GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--config-env",
+    "--exec-path",
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+}
+
+GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE = tuple(f"{option}=" for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--"))
+
+
+def command_is_git_push(command):
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    for index, token in enumerate(tokens):
+        if os.path.basename(token) != "git":
+            continue
+        cursor = index + 1
+        while cursor < len(tokens):
+            current = tokens[cursor]
+            if current == "push":
+                return True
+            if current == "--":
+                return False
+            if current in GIT_GLOBAL_OPTIONS_WITH_VALUE:
+                cursor += 2
+                continue
+            if current.startswith(GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE):
+                cursor += 1
+                continue
+            if current.startswith("-"):
+                cursor += 1
+                continue
+            break
+    return False
+
+
 def hook_is_git_push(raw):
+    if any(command_is_git_push(command) for command in collect_payload_commands(raw)):
+        return True
     text = hook_payload_text(raw)
     return bool(re.search(r"\bgit\s+push\b", text))
 
@@ -1529,7 +1641,8 @@ def gate_decision(phase, text, verify_command=None, root="."):
                 return emit_gate("execute", "Fast Lane requires focused verification")
             result = subprocess.run(verify_command, cwd=Path(root), text=True, capture_output=True)
             if result.returncode:
-                return emit_gate("execute", "Fast Lane verification command failed")
+                reason = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "Fast Lane verification command failed"
+                return emit_gate("execute", reason.removeprefix("active verification blocked: "))
             return emit_gate("checkpoint", "Fast Lane: focused verification passed")
         if review_approved:
             if not verify_command:

@@ -3,6 +3,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -20,6 +21,8 @@ LEVELS = {
 }
 
 RUN_LOG_LINE_LIMIT = 500
+STATUS_OUTPUT_CHAR_LIMIT = 40000
+HOOK_OUTPUT_CHAR_LIMIT = 12000
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
 MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")
@@ -116,6 +119,39 @@ def run_log_line_count(root):
     return len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
 
 
+def command_output_chars(root, args, input_text=""):
+    guard = root / "core" / "goal_guard.py"
+    if not guard.is_file():
+        return 0
+    try:
+        result = subprocess.run(
+            [sys.executable, str(guard), *args],
+            input=input_text,
+            text=True,
+            capture_output=True,
+            cwd=root,
+            timeout=5,
+        )
+    except Exception:
+        return 0
+    return len(result.stdout) if result.returncode == 0 else 0
+
+
+def friction_budget(root):
+    status_chars = command_output_chars(root, ["status", "--root", "."])
+    hook_prompt = json.dumps({"prompt": "goal matrix friction budget"})
+    hook_chars = max(
+        command_output_chars(root, ["hook", "SessionStart"]),
+        command_output_chars(root, ["hook", "UserPromptSubmit"], hook_prompt),
+    )
+    return {
+        "statusOutputChars": status_chars,
+        "statusOutputCharLimit": STATUS_OUTPUT_CHAR_LIMIT,
+        "hookOutputChars": hook_chars,
+        "hookOutputCharLimit": HOOK_OUTPUT_CHAR_LIMIT,
+    }
+
+
 def load_governance_policy(root):
     path = root / "loop-governance.json"
     if not path.is_file():
@@ -206,6 +242,11 @@ def audit(root):
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
     run_log_lines = run_log_line_count(root)
     signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
+    friction = friction_budget(root)
+    signals["frictionBudgetExceeded"] = (
+        friction["statusOutputChars"] > friction["statusOutputCharLimit"]
+        or friction["hookOutputChars"] > friction["hookOutputCharLimit"]
+    )
     governance_policy = load_governance_policy(root)
     policy_approval_env = governance_policy.get("approvalEnv", DEFAULT_APPROVAL_ENV) if governance_policy else ""
     state_machine_values = state_governance_machine_values(root, governance_policy)
@@ -275,6 +316,9 @@ def audit(root):
     if signals["stateVersionDrift"]:
         blocked.append("STATE.md mentions stale plugin version or package/plugin versions diverge.")
         recommendations.append("Update STATE.md plugin cache/version readback after package or plugin version changes.")
+    if signals["frictionBudgetExceeded"]:
+        blocked.append("Loop friction budget exceeded; slim status or hook output before adding more loop surface.")
+        recommendations.append("Prefer compact status or quieter hooks before adding new lifecycle machinery.")
 
     assessment = {
         "L0": "Loop spine incomplete.",
@@ -304,6 +348,7 @@ def audit(root):
         "stateVersionMentions": state_versions,
         "repoVersions": repo_versions,
         "governanceApprovalEnv": policy_approval_env,
+        "frictionBudget": friction,
         "assessment": assessment,
         "signals": signals,
         "unresolvedGaps": gaps,

@@ -762,6 +762,57 @@ def test_loop_audit_flags_oversized_run_log_for_summary_goal():
     assert any("summary/pruning goal" in item for item in audit["blocked"])
 
 
+def test_loop_audit_reports_current_friction_budget():
+    result = subprocess.run(
+        [sys.executable, str(LOOP_AUDIT), "--root", str(ROOT), "--json"],
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    budget = audit["frictionBudget"]
+    assert budget["statusOutputChars"] > 0
+    assert budget["hookOutputChars"] > 0
+    assert budget["statusOutputChars"] <= budget["statusOutputCharLimit"]
+    assert budget["hookOutputChars"] <= budget["hookOutputCharLimit"]
+    assert audit["signals"]["frictionBudgetExceeded"] is False
+
+
+def test_loop_audit_flags_oversized_loop_friction():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_file(root / "STATE.md", "Last run: now\n\n## High Priority\n\n## Watch List\n")
+        write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+        write_file(root / "LOOP.md", "# Loop\n\n## Active Loops\npackage-triage\n\n## Human Gates\n## Budget\n")
+        write_file(root / "loop-run-log.md", "# Runs\n\n## Recent Runs\n{\"outcome\":\"local\"}\n")
+        write_file(
+            root / "core" / "goal_guard.py",
+            (
+                "import sys\n"
+                "if 'status' in sys.argv:\n"
+                "    print('s' * 40001)\n"
+                "elif 'hook' in sys.argv:\n"
+                "    print('h' * 12001)\n"
+            ),
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["frictionBudgetExceeded"] is True
+    assert audit["frictionBudget"]["statusOutputChars"] > audit["frictionBudget"]["statusOutputCharLimit"]
+    assert audit["frictionBudget"]["hookOutputChars"] > audit["frictionBudget"]["hookOutputCharLimit"]
+    assert any("friction budget" in item for item in audit["blocked"])
+
+
 def test_loop_audit_flags_state_governance_policy_duplication():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -1699,6 +1750,67 @@ def test_stop_hook_preserves_review_gate_failure():
         assert not marker.exists()
 
 
+def test_stop_hook_allows_no_active_goal():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            project_root / ".goal-matrix" / "goals" / "active-goal.md",
+            "Active goal: none\n",
+        )
+
+        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        result = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="{}",
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env=env,
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        subprocess.run(["git", "init"], cwd=project_root, check=True, capture_output=True, text=True)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            project_root / ".goal-matrix" / "goals" / "active-goal.md",
+            "Active goal: none\n",
+        )
+        subprocess.run(["git", "add", "."], cwd=project_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "baseline"],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(project_root / "note.txt", "dirty\n")
+
+        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        result = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="{}",
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env=env,
+        )
+
+    assert result.returncode == 1
+    assert "Fast Lane requires focused verification" in result.stderr
+
+
 def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     env = {key: value for key, value in os.environ.items() if key != "CODEX_PLUGIN_ROOT"}
@@ -2504,6 +2616,19 @@ def test_publish_gate_hook_rejects_push_with_fragmented_history():
     assert "fragmented history" in result.stderr
 
 
+def test_publish_gate_hook_rejects_push_with_git_global_options():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        git_commit(repo, "one.txt", "one\n", "one")
+        git_commit(repo, "two.txt", "two\n", "two")
+        payload = json.dumps({"tool_input": {"cmd": "git -C . push origin HEAD"}})
+
+        result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
+
+    assert result.returncode == 1
+    assert "fragmented history" in result.stderr
+
+
 def test_publish_gate_hook_rejects_publish_action_patterns():
     for command in ("npm publish", "gh release create v1.2.3"):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2696,12 +2821,53 @@ P2 Markdown canonical state
     assert status["nextLoop"] == "G2 - UserPromptSubmit auto-start writes state too eagerly"
     assert status["goalMatrix"]["total"] == 4
     assert status["goalMatrix"]["pending"] == 4
+    assert status["goalMatrix"]["childGoals"][1]["engineeringSlice"].startswith("Subagent candidate:")
     assert status["goalMatrix"]["childGoals"][1]["dependencies"] == "G1"
     assert status["goalMatrix"]["childGoals"][1]["risk"] == "P1"
     assert status["goalMatrix"]["childGoals"][1]["parallelSafety"] == "independent if touched paths do not overlap"
     assert "| Dependencies | Risk | Parallel safety | Status |" in matrix_text
     assert "scheduler/acceptance active goal" in active_text
     assert "verify each child goal before checkpoint" in active_text
+
+
+def test_start_self_evolution_prompt_seeds_batch_when_no_pending_goals():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "开始进化")
+        active_verify_result = run_guard(["active-verify", "--root", tmp])
+        status_result = run_guard(["status", "--root", tmp])
+        active_text = (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
+        checkpointed = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
+        )
+        continued_status_result = run_guard(["status", "--root", tmp])
+        next_active_verify = run_guard(["active-verify", "--root", tmp])
+
+    assert started.returncode == 0, started.stderr
+    assert active_verify_result.returncode == 0, active_verify_result.stderr
+    payload = json.loads(started.stdout)
+    assert payload["activeGoal"] == "G1 - Schedule self-evolution backlog"
+    assert payload["plannedChildGoals"] == ["G2", "G3", "G4"]
+    assert "Verification: python3 core/goal_guard.py audit --root ." in active_text
+    assert checkpointed.returncode == 0, checkpointed.stderr
+    assert json.loads(checkpointed.stdout)["nextActiveGoal"] == "G2 - Design next evolution goal batch"
+    assert next_active_verify.returncode == 0, next_active_verify.stderr
+
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] == "G1 - Schedule self-evolution backlog"
+    assert status["nextLoop"] == "G2 - Design next evolution goal batch"
+    assert status["goalMatrix"]["total"] == 4
+    assert status["goalMatrix"]["pending"] == 4
+    child_titles = [goal["userOutcome"] for goal in status["goalMatrix"]["childGoals"][1:]]
+    assert child_titles == [
+        "Design next evolution goal batch",
+        "Execute highest-priority evolution goal",
+        "Verify loop continues after checkpoint",
+    ]
+    continued_status = json.loads(continued_status_result.stdout)
+    assert continued_status["activeGoal"] == "G2 - Design next evolution goal batch"
+    assert continued_status["goalMatrix"]["pending"] == 3
 
 
 def test_start_command_escapes_pipe_in_prompt_title():

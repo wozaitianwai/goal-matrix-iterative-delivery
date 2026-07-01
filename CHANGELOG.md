@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.4-codex.1 - 2026-07-01
+
+- Publish the loop self-evolution guardrails under plugin version `0.1.4+codex.20260701105857`.
+- Pin Codex plugin marketplace install instructions to `v0.1.4-codex.1`.
+
 ## 0.1.3+codex.20260630011248 - 2026-06-30
 
 - Bump the plugin/package version after slimming the public README pair, Codex skill prompt, and loop state docs.

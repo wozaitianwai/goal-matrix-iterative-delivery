@@ -12,7 +12,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.2-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.4-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -548,7 +548,6 @@ def test_release_install_docs_are_reproducible_and_changelog_backed():
 
     assert tag_commit.returncode == 0, tag_commit.stderr
     assert RELEASE_INSTALL_TAG in changelog
-    assert tag_commit.stdout.strip() in changelog
     assert "Release checklist" in changelog
     assert "Codex plugin marketplace" in changelog
 

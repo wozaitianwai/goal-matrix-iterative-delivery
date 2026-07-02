@@ -13,7 +13,7 @@ Keep Codex work honest: one active slice, one truth source, one proof before han
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.4-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.5-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
@@ -54,6 +54,7 @@ initialize -> classify -> design -> execute -> review -> checkpoint -> next loop
 Broad prompts can create pending child goals, but the main thread still verifies and checkpoints one child goal at a time. Fast Lane is only for trivial typo, copy, or single-function edits with no active goal.
 
 Hooks do not create the visible Codex sidebar goal; call `create_goal` when visible tracking matters.
+Checkpoint promotes the next goal in state; the runtime still has to continue execution.
 
 ## Runtime Boundaries
 

@@ -12,7 +12,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.4-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.5-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -2829,7 +2829,7 @@ P2 Markdown canonical state
     assert "verify each child goal before checkpoint" in active_text
 
 
-def test_start_self_evolution_prompt_seeds_batch_when_no_pending_goals():
+def test_start_self_evolution_prompt_seeds_concrete_batch_from_repo_signals():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -2850,23 +2850,57 @@ def test_start_self_evolution_prompt_seeds_batch_when_no_pending_goals():
     assert payload["plannedChildGoals"] == ["G2", "G3", "G4"]
     assert "Verification: python3 core/goal_guard.py audit --root ." in active_text
     assert checkpointed.returncode == 0, checkpointed.stderr
-    assert json.loads(checkpointed.stdout)["nextActiveGoal"] == "G2 - Design next evolution goal batch"
+    assert json.loads(checkpointed.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
     assert next_active_verify.returncode == 0, next_active_verify.stderr
 
     status = json.loads(status_result.stdout)
     assert status["activeGoal"] == "G1 - Schedule self-evolution backlog"
-    assert status["nextLoop"] == "G2 - Design next evolution goal batch"
+    assert status["nextLoop"] == "G2 - Machine-readable next action is explicit"
     assert status["goalMatrix"]["total"] == 4
     assert status["goalMatrix"]["pending"] == 4
     child_titles = [goal["userOutcome"] for goal in status["goalMatrix"]["childGoals"][1:]]
     assert child_titles == [
-        "Design next evolution goal batch",
-        "Execute highest-priority evolution goal",
-        "Verify loop continues after checkpoint",
+        "Machine-readable next action is explicit",
+        "Visible goal runtime contract is explicit",
+        "Self-evolution loop has an end-to-end proof",
     ]
     continued_status = json.loads(continued_status_result.stdout)
-    assert continued_status["activeGoal"] == "G2 - Design next evolution goal batch"
+    assert continued_status["activeGoal"] == "G2 - Machine-readable next action is explicit"
     assert continued_status["goalMatrix"]["pending"] == 3
+
+
+def test_self_evolution_loop_has_end_to_end_proof():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "开始进化")
+        first = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
+        )
+        second = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
+        )
+        third = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
+        )
+        fourth = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
+        )
+        status_result = run_guard(["status", "--root", tmp])
+
+    assert started.returncode == 0, started.stderr
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert third.returncode == 0, third.stderr
+    assert fourth.returncode == 0, fourth.stderr
+    assert json.loads(first.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
+    assert json.loads(second.stdout)["nextActiveGoal"] == "G3 - Visible goal runtime contract is explicit"
+    assert json.loads(third.stdout)["nextActiveGoal"] == "G4 - Self-evolution loop has an end-to-end proof"
+    assert json.loads(fourth.stdout)["nextActiveGoal"] is None
+    status = json.loads(status_result.stdout)
+    assert status["activeGoal"] is None
+    assert status["nextLoop"] is None
+    assert status["goalMatrix"]["pending"] == 0
 
 
 def test_start_command_escapes_pipe_in_prompt_title():
@@ -3091,6 +3125,138 @@ def test_doctor_command_reports_resume_and_plugin_source():
     assert doctor["source"]["adapterSkillPath"].endswith(
         "adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md"
     )
+
+
+def test_status_or_doctor_surfaces_next_action():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Dependencies | Risk | Parallel safety | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| G1 | First slice | Implement first slice | Tests | unit test | none | P1 | main thread only | Pending |
+| G2 | Independent investigation | Investigate second slice | Logs | log readback | none | P2 | independent if touched paths do not overlap | Pending |
+""",
+        )
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: G1 - First slice
+Initialization type: iteration
+Policy impact: none
+Touched paths: tests/test_goal_guard.py
+Delivery boundary: first slice only
+Skipped: second slice
+Truth source: Tests
+Verification: unit test
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        run_guard(["status", "--root", tmp])
+        status_result = run_guard(["status", "--root", tmp])
+        doctor_result = run_guard(["doctor", "--root", tmp])
+
+    assert status_result.returncode == 0, status_result.stderr
+    status = json.loads(status_result.stdout)
+    assert status["nextAction"]["type"] == "continue_active_goal"
+    assert status["nextAction"]["goal"] == "G1 - First slice"
+    assert status["nextAction"]["verification"] == "unit test"
+    assert status["nextAction"]["deliveryBoundary"] == "first slice only"
+    assert status["subagentCandidates"] == [
+        {
+            "goal": "G2 - Independent investigation",
+            "dependencies": "none",
+            "risk": "P2",
+            "parallelSafety": "independent if touched paths do not overlap",
+        }
+    ]
+    assert "Continue active goal G1 - First slice." in status["nextAction"]["continuePrompt"]
+
+    assert doctor_result.returncode == 0, doctor_result.stderr
+    doctor = json.loads(doctor_result.stdout)
+    assert doctor["resume"]["nextAction"] == status["nextAction"]
+    assert doctor["resume"]["subagentCandidates"] == status["subagentCandidates"]
+
+
+def test_promote_handoff_excludes_promoted_goal_and_normalizes_verification():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Dependencies | Risk | Parallel safety | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| G1 | Next slice | Start next slice | Status JSON | `python3 -m pytest tests/test_goal_guard.py -q` | none | P1 | independent if touched paths do not overlap | Pending |
+| G2 | Parallel slice | Work another slice | Doctor JSON | log readback | none | P2 | independent if touched paths do not overlap | Pending |
+""",
+        )
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: none
+Initialization type: iteration
+Policy impact: none
+Touched paths: none
+Delivery boundary: none
+Skipped: none
+Truth source: none
+Verification: none
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        status_result = run_guard(["status", "--root", tmp])
+        doctor_result = run_guard(["doctor", "--root", tmp])
+
+    assert status_result.returncode == 0, status_result.stderr
+    status = json.loads(status_result.stdout)
+    assert status["nextAction"] == {
+        "type": "promote_pending_goal",
+        "goal": "G1 - Next slice",
+        "verification": "python3 -m pytest tests/test_goal_guard.py -q",
+        "truthSource": "Status JSON",
+        "continuePrompt": "Start next pending goal G1 - Next slice. Verification: python3 -m pytest tests/test_goal_guard.py -q.",
+    }
+    assert status["subagentCandidates"] == [
+        {
+            "goal": "G2 - Parallel slice",
+            "dependencies": "none",
+            "risk": "P2",
+            "parallelSafety": "independent if touched paths do not overlap",
+        }
+    ]
+
+    assert doctor_result.returncode == 0, doctor_result.stderr
+    doctor = json.loads(doctor_result.stdout)
+    assert doctor["resume"]["nextAction"] == status["nextAction"]
+    assert doctor["resume"]["subagentCandidates"] == status["subagentCandidates"]
+
+
+def test_doctor_runtime_contract_is_explicit():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        result = run_guard(["doctor", "--root", tmp])
+
+    assert result.returncode == 0, result.stderr
+    doctor = json.loads(result.stdout)
+    runtime = doctor["runtime"]
+    assert runtime["visibleGoalRequiresCreateGoal"] is True
+    assert runtime["hookCanCreateCodexGoal"] is False
+    assert runtime["checkpointPromotesNextGoal"] is True
+    assert runtime["runtimeMustContinueAfterCheckpoint"] is True
+    assert runtime["continuationMode"] == "checkpoint_promotes_state_runtime_continues"
+    assert "create_goal" in runtime["minimalFixPath"]
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    adapter_readme = (ROOT / "adapters" / "codex" / "README.md").read_text(encoding="utf-8")
+    assert "Checkpoint promotes the next goal in state; the runtime still has to continue execution." in readme
+    assert "Checkpoint promotes the next goal in state; the runtime still has to continue execution." in adapter_readme
 
 
 def test_doctor_command_reports_installed_skill_drift():

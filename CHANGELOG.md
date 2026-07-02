@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.5-codex.1 - 2026-07-02
+
+- Publish the promote-handoff fixes under plugin version `0.1.5+codex.20260702102020`.
+- Pin Codex plugin marketplace install instructions to `v0.1.5-codex.1`.
+
 ## v0.1.4-codex.1 - 2026-07-01
 
 - Publish the loop self-evolution guardrails under plugin version `0.1.4+codex.20260701105857`.

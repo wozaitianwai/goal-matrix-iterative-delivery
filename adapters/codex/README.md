@@ -5,7 +5,7 @@ Codex is the only lifecycle adapter wired in this package.
 ## Install From GitHub
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.4-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.5-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
@@ -39,6 +39,7 @@ If `.git/hooks/pre-push` already exists, the installer chains it from `.git/hook
 The adapter stays thin. Workflow rules belong in `core/protocol.md`; Codex files only package those rules for Codex.
 
 Lifecycle hooks inject context and can block unsafe publish actions. A visible Codex goal still requires the agent to call `create_goal`.
+Checkpoint promotes the next goal in state; the runtime still has to continue execution.
 
 ## Project Notifications
 

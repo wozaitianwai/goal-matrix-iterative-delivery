@@ -699,11 +699,82 @@ def active_goal_title(goal):
     return f"{goal['id']} - {goal['userOutcome']}"
 
 
+def normalized_verification(value):
+    return str(value).strip().strip("`") if value else ""
+
+
 def first_pending_goal(goals):
     for goal in goals:
         if goal["status"].lower() == "pending":
             return goal
     return None
+
+
+def pending_goal_after_active(goals, active_goal):
+    active_id = active_goal_id(active_goal)
+    for goal in goals:
+        if goal["status"].lower() != "pending":
+            continue
+        if active_id and goal["id"] == active_id:
+            continue
+        return goal
+    return None
+
+
+def subagent_candidates(goals, active_goal):
+    active_id = active_goal_id(active_goal)
+    promoted_goal = None if has_pending_active_goal(goals, active_goal) else pending_goal_after_active(goals, active_goal)
+    promoted_id = promoted_goal["id"] if promoted_goal else None
+    candidates = []
+    for goal in goals:
+        if goal["status"].lower() != "pending":
+            continue
+        if goal["id"] == active_id or goal["id"] == promoted_id:
+            continue
+        if not goal.get("parallelSafety", "").startswith("independent"):
+            continue
+        candidates.append(
+            {
+                "goal": active_goal_title(goal),
+                "dependencies": goal.get("dependencies", "none"),
+                "risk": goal.get("risk", "medium"),
+                "parallelSafety": goal.get("parallelSafety", ""),
+            }
+        )
+    return candidates
+
+
+def next_action_payload(root, goals, active_goal):
+    active_id = active_goal_id(active_goal)
+    active = next((goal for goal in goals if goal["id"] == active_id), None)
+    if active and active["status"].lower() == "pending":
+        verification = normalized_verification(read_active_goal_value(root, "Verification") or active.get("verification", ""))
+        boundary = read_active_goal_value(root, "Delivery boundary")
+        truth_source = read_active_goal_value(root, "Truth source") or active.get("truthSource", "")
+        title = active_goal_title(active)
+        return {
+            "type": "continue_active_goal",
+            "goal": title,
+            "verification": verification,
+            "deliveryBoundary": boundary,
+            "truthSource": truth_source,
+            "continuePrompt": (
+                f"Continue active goal {title}. "
+                f"Boundary: {boundary}. Truth source: {truth_source}. Verification: {verification}."
+            ).strip(),
+        }
+    next_goal = pending_goal_after_active(goals, active_goal)
+    if next_goal:
+        title = active_goal_title(next_goal)
+        verification = normalized_verification(next_goal.get("verification", ""))
+        return {
+            "type": "promote_pending_goal",
+            "goal": title,
+            "verification": verification,
+            "truthSource": next_goal.get("truthSource", ""),
+            "continuePrompt": f"Start next pending goal {title}. Verification: {verification}.",
+        }
+    return {"type": "complete", "message": "No pending goal remains."}
 
 
 def status_payload(root):
@@ -717,6 +788,8 @@ def status_payload(root):
         "auditProblems": problems,
         "activeGoal": active_goal,
         "nextLoop": read_next_loop(root, active_goal),
+        "nextAction": next_action_payload(root, goals, active_goal),
+        "subagentCandidates": subagent_candidates(goals, active_goal),
         "goalMatrix": goal_matrix_summary(goals, active_goal),
         "loopStages": list(LOOP_STAGES),
     }
@@ -733,6 +806,9 @@ def write_state_json(root):
             {
                 "schemaVersion": 1,
                 "activeGoal": active_goal,
+                "nextLoop": read_next_loop(root, active_goal),
+                "nextAction": next_action_payload(root, goals, active_goal),
+                "subagentCandidates": subagent_candidates(goals, active_goal),
                 "goalMatrix": goal_matrix_summary(goals, active_goal),
             },
             ensure_ascii=False,
@@ -818,6 +894,56 @@ def broad_prompt_items(prompt):
     return items if len(items) >= 2 else []
 
 
+def doctor_runtime_hints(root):
+    return {
+        "visibleGoalRequiresCreateGoal": True,
+        "hookCanCreateCodexGoal": False,
+        "checkpointPromotesNextGoal": True,
+        "runtimeMustContinueAfterCheckpoint": True,
+        "continuationMode": "checkpoint_promotes_state_runtime_continues",
+        "minimalFixPath": "load the plugin marketplace/cache for hooks, then call Codex create_goal for visible goals",
+    }
+
+
+def self_evolution_seed_items(root):
+    status = status_payload(root)
+    runtime = doctor_runtime_hints(root)
+    items = []
+    next_loop = status.get("nextLoop")
+    if next_loop == "G0 - Initialize project governance":
+        next_loop = None
+    if not next_loop:
+        items.append(
+            {
+                "title": "Machine-readable next action is explicit",
+                "risk": "P1",
+                "engineering_slice": "Surface nextAction and subagentCandidates in status or doctor output so loop continuation does not depend on prose",
+                "truth_source": "status and doctor JSON readback",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+            }
+        )
+    if runtime.get("visibleGoalRequiresCreateGoal") and not runtime.get("hookCanCreateCodexGoal"):
+        items.append(
+            {
+                "title": "Visible goal runtime contract is explicit",
+                "risk": "P1",
+                "engineering_slice": "Keep create_goal and hook runtime limits aligned across runtime output and docs",
+                "truth_source": "runtime readback and docs invariants",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+            }
+        )
+    items.append(
+        {
+            "title": "Self-evolution loop has an end-to-end proof",
+            "risk": "P2",
+            "engineering_slice": "Add one concrete integration proof that seed -> checkpoint -> next goal promotion stays continuous",
+            "truth_source": "self-evolution integration test readback",
+            "verification": "`python3 core/goal_guard.py audit --root .`",
+        }
+    )
+    return items
+
+
 def wants_self_evolution(prompt):
     return bool(
         re.search(
@@ -853,29 +979,7 @@ def start_project(root, prompt):
     self_evolution_seed = False
     if not items and wants_self_evolution(prompt):
         self_evolution_seed = True
-        items = [
-            {
-                "title": "Design next evolution goal batch",
-                "risk": "P1",
-                "engineering_slice": "Turn current loop evidence into concrete pending evolution goals",
-                "truth_source": "start command status readback",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-            },
-            {
-                "title": "Execute highest-priority evolution goal",
-                "risk": "P1",
-                "engineering_slice": "Implement the first verified goal from the designed batch",
-                "truth_source": "goal-specific verification evidence",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-            },
-            {
-                "title": "Verify loop continues after checkpoint",
-                "risk": "P2",
-                "engineering_slice": "Checkpoint and confirm the next pending goal becomes active",
-                "truth_source": "checkpoint status readback",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-            },
-        ]
+        items = self_evolution_seed_items(root)
     if items:
         scheduler_title = "Schedule self-evolution backlog" if self_evolution_seed else "Schedule broad prompt delivery"
         scheduler_slice = (
@@ -1184,11 +1288,7 @@ def doctor_project(root, fix=False):
             and installed_verifier_skill.read_text(encoding="utf-8") == verifier_skill.read_text(encoding="utf-8")
         ),
     }
-    runtime = {
-        "visibleGoalRequiresCreateGoal": True,
-        "hookCanCreateCodexGoal": False,
-        "minimalFixPath": "load the plugin marketplace/cache for hooks, then call Codex create_goal for visible goals",
-    }
+    runtime = doctor_runtime_hints(root)
     pre_push = root / ".git" / "hooks" / "pre-push"
     native_hooks = {
         "prePushHookPath": str(pre_push),

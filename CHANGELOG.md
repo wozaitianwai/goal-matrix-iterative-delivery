@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.6-codex.1 - 2026-07-03
+
+- Publish the matrix-first-response contract fix under plugin version `0.1.6+codex.20260703200323`.
+- Pin Codex plugin marketplace install instructions to `v0.1.6-codex.1`.
+
 ## v0.1.5-codex.1 - 2026-07-02
 
 - Publish the promote-handoff fixes under plugin version `0.1.5+codex.20260702102020`.

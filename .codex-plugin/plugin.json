@@ -1,6 +1,6 @@
 {
   "name": "goal-matrix-iterative-delivery",
-  "version": "0.1.5+codex.20260702102020",
+  "version": "0.1.6+codex.20260703200323",
   "description": "hook-backed goal-matrix workflow guard for Codex.",
   "author": {
     "name": "wozaitianwai",
@@ -30,7 +30,7 @@
     ],
     "websiteURL": "https://github.com/wozaitianwai/goal-matrix-iterative-delivery",
     "defaultPrompt": [
-      "Use goal matrix delivery for this task.",
+      "Use goal matrix delivery for this task. The first substantive response must show a goal matrix or active-goal block before freeform discussion.",
       "Run one child goal with real verification.",
       "Audit this plan for goal drift."
     ],

@@ -12,7 +12,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.5-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.6-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -1399,6 +1399,28 @@ def test_hook_context_explains_visible_codex_goal_boundary():
     context = hook_context(json.loads(result.stdout))
     assert "create_goal" in context
     assert "visible Codex goal" in context
+
+
+def test_session_start_requires_matrix_first_response_contract():
+    result = run_guard(["hook", "SessionStart"], "{}")
+
+    assert result.returncode == 0, result.stderr
+    context = hook_context(json.loads(result.stdout))
+    assert "First substantive response" in context
+    assert "goal matrix or active-goal block" in context
+    assert "freeform discussion" in context
+
+
+def test_plugin_skill_and_default_prompt_require_matrix_first_response():
+    skill_text = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
+    agent_text = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/agents/openai.yaml")
+    manifest = json.loads(read_text(".codex-plugin/plugin.json"))
+    default_prompt = " ".join(manifest["interface"]["defaultPrompt"])
+
+    assert "first substantive response" in skill_text.lower()
+    assert "goal matrix or active-goal block" in skill_text
+    assert "first substantive response" in agent_text.lower()
+    assert "first substantive response" in default_prompt.lower()
 
 
 def test_user_prompt_submit_injects_goal_self_correction_for_goal_work():

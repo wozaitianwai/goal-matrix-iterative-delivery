@@ -197,6 +197,10 @@ Codex visible goal runtime:
 - Hooks inject context only; they cannot create the visible Codex goal by themselves.
 - If a goal-like prompt needs a visible Codex goal and create_goal is available, call create_goal once before work.
 
+First response contract:
+- First substantive response after Goal Matrix Delivery is active must show a goal matrix or active-goal block before freeform discussion.
+- If the task is still in clarify/design mode or is read-only, show the lightweight matrix/active-goal draft first, then continue with discussion.
+
 Goal self-correction:
 - If the goal matrix is missing, write or repair it before code changes.
 - If Active goal / Delivery boundary / Skipped / Verification / Development flow is missing, stop and add it.

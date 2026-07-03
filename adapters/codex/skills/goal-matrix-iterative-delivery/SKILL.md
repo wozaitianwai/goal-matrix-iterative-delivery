@@ -28,6 +28,8 @@ Codex adapter for the Goal Matrix Engineering Protocol. Keep one active goal vis
 
 - Hooks inject context only; they cannot create the visible Codex goal.
 - If a goal-like prompt needs visible tracking and `create_goal` is available, call `create_goal` once before work.
+- The first substantive response after this skill is active must show a goal matrix or active-goal block before freeform discussion.
+- In clarify/design or read-only work, show the lightweight matrix/active-goal draft first, then continue with discussion.
 
 ## Active Loop
 

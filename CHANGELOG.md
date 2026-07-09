@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.8-codex.2 - 2026-07-09
+
+- Reissue v0.1.8 with CI-stable friction-budget tests for fresh GitHub runner checkouts under plugin version `0.1.8+codex.20260709213513`.
+- Pin Codex plugin marketplace install instructions to `v0.1.8-codex.2`.
+
 ## v0.1.8-codex.1 - 2026-07-09
 
 - Publish the first `goal_guard.py` verification subdomain split, CI matrix/lint/PR gate hardening, and compound active verification evidence fix under plugin version `0.1.8+codex.20260709212827`.

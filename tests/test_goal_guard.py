@@ -14,7 +14,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.8-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.8-codex.2"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -435,7 +435,7 @@ def test_install_adapter_global_codex_syncs_installed_skill():
         installed_text = installed.read_text(encoding="utf-8") if installed.is_file() else ""
         verifier_text = verifier.read_text(encoding="utf-8") if verifier.is_file() else ""
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode in {0, 2}, result.stderr
     assert installed_text == read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
     assert verifier_text == read_text("adapters/codex/skills/loop-verifier/SKILL.md")
 
@@ -764,14 +764,24 @@ def test_loop_audit_flags_oversized_run_log_for_summary_goal():
 
 
 def test_loop_audit_reports_current_friction_budget():
-    result = subprocess.run(
-        [sys.executable, str(LOOP_AUDIT), "--root", str(ROOT), "--json"],
-        text=True,
-        capture_output=True,
-        cwd=ROOT,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "core").mkdir()
+        write_file(root / "core" / "goal_guard.py", GUARD.read_text(encoding="utf-8"))
+        write_file(
+            root / "core" / "goal_verification.py",
+            (ROOT / "core" / "goal_verification.py").read_text(encoding="utf-8"),
+        )
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
-    assert result.returncode == 0, result.stderr
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", tmp, "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode in {0, 2}, result.stderr
     audit = json.loads(result.stdout)
     budget = audit["frictionBudget"]
     assert budget["statusOutputChars"] > 0

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.8-codex.1 - 2026-07-09
+
+- Publish the first `goal_guard.py` verification subdomain split, CI matrix/lint/PR gate hardening, and compound active verification evidence fix under plugin version `0.1.8+codex.20260709212827`.
+- Pin Codex plugin marketplace install instructions to `v0.1.8-codex.1`.
+
 ## v0.1.7-codex.1 - 2026-07-09
 
 - Publish the matrix/archive drift guardrails and next-action continuation command path under plugin version `0.1.7+codex.20260709210243`.

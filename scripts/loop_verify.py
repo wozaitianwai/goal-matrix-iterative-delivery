@@ -16,12 +16,14 @@ CHECKS = (
     ("loop audit", [sys.executable, "scripts/loop_audit.py", "--root", ".", "--json"]),
     ("package validation", [sys.executable, "scripts/validate_plugin_package.py", "--root", "."]),
     ("pi-extension tests", ["node", "--test", "pi-extension/test/extension.test.js"]),
+    ("python lint", [sys.executable, "scripts/lint_python.py"]),
     (
         "py_compile",
         [
             sys.executable,
             "-m",
             "py_compile",
+            "scripts/lint_python.py",
             "core/goal_guard.py",
             "scripts/install_adapter.py",
             "scripts/validate_plugin_package.py",

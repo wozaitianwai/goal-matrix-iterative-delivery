@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import shlex
@@ -13,7 +14,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.7-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.8-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -1268,6 +1269,7 @@ def test_loop_verify_script_and_ci_share_one_gate():
 def test_ci_workflow_lists_native_test_surfaces_explicitly():
     text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
     for phrase in (
+        "python3 scripts/lint_python.py",
         "python3 tests/test_goal_guard.py",
         "python3 scripts/validate_plugin_package.py --root .",
         "node --test pi-extension/test/extension.test.js",
@@ -1278,6 +1280,21 @@ def test_ci_workflow_lists_native_test_surfaces_explicitly():
         "python3 scripts/loop_verify.py",
     ):
         assert phrase in text
+
+
+def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(
+        encoding="utf-8"
+    )
+    verify_text = (ROOT / "scripts" / "loop_verify.py").read_text(encoding="utf-8")
+
+    assert "pull_request:" in workflow_text
+    assert "strategy:" in workflow_text
+    assert "matrix:" in workflow_text
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow_text
+    assert "python-version: ${{ matrix.python-version }}" in workflow_text
+    assert "python3 scripts/lint_python.py" in workflow_text
+    assert "scripts/lint_python.py" in verify_text
 
 
 def test_ci_workflow_has_loop_cadence_trigger():
@@ -1736,6 +1753,37 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 
     assert result.returncode == 0, result.stderr
     assert verified == "ok"
+
+
+def test_active_verify_runs_compound_verification_command():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        first = f"{sys.executable} -c \"from pathlib import Path; Path('first.txt').write_text('one')\""
+        second = f"{sys.executable} -c \"from pathlib import Path; Path('second.txt').write_text('two')\""
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Verify target
+Initialization type: iteration
+Policy impact: none
+Touched paths: first.txt, second.txt
+Delivery boundary: compound verification
+Skipped: none
+Truth source: first.txt and second.txt
+Verification: {first} && {second}
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+
+        result = run_guard(["active-verify", "--root", tmp])
+        first_text = (root / "first.txt").read_text(encoding="utf-8") if (root / "first.txt").is_file() else ""
+        second_text = (root / "second.txt").read_text(encoding="utf-8") if (root / "second.txt").is_file() else ""
+
+    assert result.returncode == 0, result.stderr
+    assert first_text == "one"
+    assert second_text == "two"
 
 
 def test_stop_hook_preserves_review_gate_failure():
@@ -3067,6 +3115,22 @@ def test_audit_allows_compound_done_verification_with_status_and_real_check():
         result = run_guard(["audit", "--root", tmp])
 
     assert result.returncode == 0, result.stderr
+
+
+def test_verification_helpers_are_in_subdomain_module():
+    spec = importlib.util.spec_from_file_location("goal_verification", ROOT / "core" / "goal_verification.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.normalized_verification("`python3 --version`") == "python3 --version"
+    assert module.verification_is_metadata_status("python3 core/goal_guard.py status --root .")
+    assert not module.verification_is_metadata_status(
+        "python3 core/goal_guard.py status --root . && python3 tests/test_goal_guard.py"
+    )
+    assert module.active_goal_iteration_commands(".") == {
+        "verify": "python3 core/goal_guard.py active-verify --root .",
+        "checkpoint": "python3 core/goal_guard.py checkpoint --root . -- python3 core/goal_guard.py active-verify --root .",
+    }
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

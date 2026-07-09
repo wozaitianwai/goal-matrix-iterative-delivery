@@ -10,6 +10,27 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from goal_verification import (
+        active_goal_iteration_commands,
+        is_metadata_only_verification,
+        normalized_verification,
+        resolve_guard_verify_command,
+        verification_requires_shell,
+        verification_is_metadata_status,
+        write_checkpoint_evidence,
+    )
+except ImportError:
+    from core.goal_verification import (
+        active_goal_iteration_commands,
+        is_metadata_only_verification,
+        normalized_verification,
+        resolve_guard_verify_command,
+        verification_requires_shell,
+        verification_is_metadata_status,
+        write_checkpoint_evidence,
+    )
+
 
 NARROW_TRIGGER_PATTERNS = (
     r"\bgoal[- ]?matrix\b",
@@ -666,32 +687,6 @@ def read_goal_matrix(root):
     return read_goal_matrix_markdown(root)
 
 
-def verification_is_metadata_status(value):
-    try:
-        parts = shlex.split(str(value).strip().strip("`"))
-    except ValueError:
-        return False
-    if any(part in {"&&", "||", ";", "|"} for part in parts):
-        return False
-    for index, arg in enumerate(parts[:-1]):
-        if Path(arg).name != "goal_guard.py" or parts[index + 1] != "status":
-            continue
-        prefix = parts[:index]
-        if prefix and Path(prefix[-1]).name not in {"python", "python3"}:
-            return False
-        tail = parts[index + 2:]
-        while tail:
-            if tail[0] == "--root" and len(tail) >= 2:
-                tail = tail[2:]
-                continue
-            if tail[0].startswith("--root="):
-                tail = tail[1:]
-                continue
-            return False
-        return True
-    return False
-
-
 def audit_visible_done_goal_verification(root):
     problems = []
     for goal in read_goal_matrix_markdown(root):
@@ -804,10 +799,6 @@ def active_goal_title(goal):
     return f"{goal['id']} - {goal['userOutcome']}"
 
 
-def normalized_verification(value):
-    return str(value).strip().strip("`") if value else ""
-
-
 def first_pending_goal(goals):
     for goal in goals:
         if goal["status"].lower() == "pending":
@@ -824,12 +815,6 @@ def pending_goal_after_active(goals, active_goal):
             continue
         return goal
     return None
-
-
-def active_goal_iteration_commands(root):
-    verify = ["python3", "core/goal_guard.py", "active-verify", "--root", str(root)]
-    checkpoint = ["python3", "core/goal_guard.py", "checkpoint", "--root", str(root), "--", *verify]
-    return {"verify": shlex.join(verify), "checkpoint": shlex.join(checkpoint)}
 
 
 def subagent_candidates(goals, active_goal):
@@ -1307,43 +1292,6 @@ def mark_goal_done(root, goal_id):
     path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 
 
-def is_metadata_only_verification(verify_command):
-    for index, arg in enumerate(verify_command[:-1]):
-        if Path(str(arg)).name == "goal_guard.py" and verify_command[index + 1] == "status":
-            return True
-    return False
-
-
-def resolve_guard_verify_command(root, verify_command):
-    resolved = list(verify_command)
-    for index, arg in enumerate(resolved):
-        path = Path(str(arg))
-        if path.name == "goal_guard.py" and not path.is_absolute() and not (Path(root) / path).is_file():
-            resolved[index] = str(Path(__file__).resolve())
-    return resolved
-
-
-def write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result):
-    path = Path(root) / ".goal-matrix" / "evidence" / f"{goal_id}.log"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "\n".join(
-            [
-                f"Goal: {active_goal}",
-                f"Command: {shlex.join(map(str, verify_command))}",
-                f"Exit code: {result.returncode}",
-                "Stdout:",
-                result.stdout.rstrip(),
-                "Stderr:",
-                result.stderr.rstrip(),
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
 def checkpoint_project(root, verify_command, if_active=False):
     root = Path(root)
     if not verify_command:
@@ -1413,9 +1361,11 @@ def active_verify(root):
     except ValueError as exc:
         print(f"active verification blocked: cannot parse Verification field: {exc}", file=sys.stderr)
         return 1
-    if is_metadata_only_verification(verify_command):
+    if verification_is_metadata_status(verification):
         print("active verification blocked: metadata-only verification is not allowed", file=sys.stderr)
         return 1
+    if verification_requires_shell(verification):
+        return subprocess.run(verification, cwd=root, text=True, shell=True).returncode
     verify_command = resolve_guard_verify_command(root, verify_command)
     return subprocess.run(verify_command, cwd=root, text=True).returncode
 

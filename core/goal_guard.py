@@ -462,6 +462,9 @@ def audit_project(root):
             if item not in completion:
                 problems.append(f"project policy missing completion requirement: {item}")
 
+    problems.extend(audit_visible_goal_matrix_drift(root))
+    problems.extend(audit_visible_done_goal_verification(root))
+
     return problems
 
 
@@ -663,15 +666,73 @@ def read_goal_matrix(root):
     return read_goal_matrix_markdown(root)
 
 
-def read_next_loop(root, active_goal):
+def verification_is_metadata_status(value):
+    try:
+        parts = shlex.split(str(value).strip().strip("`"))
+    except ValueError:
+        return False
+    if any(part in {"&&", "||", ";", "|"} for part in parts):
+        return False
+    for index, arg in enumerate(parts[:-1]):
+        if Path(arg).name != "goal_guard.py" or parts[index + 1] != "status":
+            continue
+        prefix = parts[:index]
+        if prefix and Path(prefix[-1]).name not in {"python", "python3"}:
+            return False
+        tail = parts[index + 2:]
+        while tail:
+            if tail[0] == "--root" and len(tail) >= 2:
+                tail = tail[2:]
+                continue
+            if tail[0].startswith("--root="):
+                tail = tail[1:]
+                continue
+            return False
+        return True
+    return False
+
+
+def audit_visible_done_goal_verification(root):
+    problems = []
+    for goal in read_goal_matrix_markdown(root):
+        if goal.get("status", "").lower() != "done":
+            continue
+        if verification_is_metadata_status(goal.get("verification", "")):
+            problems.append(f"Done goal {goal.get('id', '<unknown>')} verification cannot be metadata-only status")
+    return problems
+
+
+def audit_visible_goal_matrix_drift(root):
+    state_goals = read_goal_matrix(root)
+    if not state_goals:
+        return []
+    state_by_id = {goal.get("id"): goal for goal in state_goals if goal.get("id")}
+    problems = []
+    for visible in read_goal_matrix_markdown(root):
+        goal_id = visible.get("id")
+        state_goal = state_by_id.get(goal_id)
+        if not state_goal:
+            problems.append(f"goal matrix drift: {goal_id} is not in state.json")
+            continue
+        for field in ("userOutcome", "engineeringSlice", "truthSource", "verification", "status"):
+            if visible.get(field, "") != state_goal.get(field, ""):
+                problems.append(f"goal matrix drift: {goal_id} {field} differs from state.json")
+    return problems
+
+
+def next_loop_from_goals(goals, active_goal):
     active_id = active_goal_id(active_goal)
-    for goal in read_goal_matrix(root):
+    for goal in goals:
         if goal["status"].lower() != "pending":
             continue
         if active_id and goal["id"] == active_id:
             continue
         return f"{goal['id']} - {goal['userOutcome']}"
     return None
+
+
+def read_next_loop(root, active_goal):
+    return next_loop_from_goals(read_goal_matrix(root), active_goal)
 
 
 def next_goal_id(goals):
@@ -692,6 +753,46 @@ def goal_matrix_summary(goals, active_goal):
         "activeId": active_id,
         "childGoals": goals,
     }
+
+
+def visible_status_goals(root, goals, active_goal):
+    visible = read_goal_matrix_markdown(root)
+    if not visible or len(visible) >= len(goals):
+        return goals
+    state_ids = {goal.get("id") for goal in goals}
+    visible_ids = {goal.get("id") for goal in visible}
+    required_ids = {
+        goal.get("id")
+        for goal in goals
+        if goal.get("status", "").lower() != "done" or goal.get("id") == active_goal_id(active_goal)
+    }
+    return visible if visible_ids <= state_ids and required_ids <= visible_ids else goals
+
+
+def status_goal_matrix_summary(root, goals, active_goal):
+    summary = goal_matrix_summary(goals, active_goal)
+    visible = visible_status_goals(root, goals, active_goal)
+    if visible is not goals:
+        summary["childGoals"] = visible
+        summary["visible"] = len(visible)
+        summary["archived"] = len(goals) - len(visible)
+    return summary
+
+
+def merge_state_goals(root):
+    state_goals = read_goal_matrix(root)
+    markdown_goals = read_goal_matrix_markdown(root)
+    if not state_goals:
+        return markdown_goals
+    markdown_by_id = {goal.get("id"): goal for goal in markdown_goals if goal.get("id")}
+    merged = []
+    seen = set()
+    for goal in state_goals:
+        goal_id = goal.get("id")
+        merged.append(markdown_by_id.get(goal_id, goal))
+        seen.add(goal_id)
+    merged.extend(goal for goal in markdown_goals if goal.get("id") not in seen)
+    return merged
 
 
 def has_pending_active_goal(goals, active_goal):
@@ -723,6 +824,12 @@ def pending_goal_after_active(goals, active_goal):
             continue
         return goal
     return None
+
+
+def active_goal_iteration_commands(root):
+    verify = ["python3", "core/goal_guard.py", "active-verify", "--root", str(root)]
+    checkpoint = ["python3", "core/goal_guard.py", "checkpoint", "--root", str(root), "--", *verify]
+    return {"verify": shlex.join(verify), "checkpoint": shlex.join(checkpoint)}
 
 
 def subagent_candidates(goals, active_goal):
@@ -762,6 +869,7 @@ def next_action_payload(root, goals, active_goal):
             "verification": verification,
             "deliveryBoundary": boundary,
             "truthSource": truth_source,
+            "commands": active_goal_iteration_commands(root),
             "continuePrompt": (
                 f"Continue active goal {title}. "
                 f"Boundary: {boundary}. Truth source: {truth_source}. Verification: {verification}."
@@ -794,15 +902,15 @@ def status_payload(root):
         "nextLoop": read_next_loop(root, active_goal),
         "nextAction": next_action_payload(root, goals, active_goal),
         "subagentCandidates": subagent_candidates(goals, active_goal),
-        "goalMatrix": goal_matrix_summary(goals, active_goal),
+        "goalMatrix": status_goal_matrix_summary(root, goals, active_goal),
         "loopStages": list(LOOP_STAGES),
     }
 
 
-def write_state_json(root):
+def write_state_json(root, goals=None, active_goal=None):
     root = Path(root)
-    active_goal = read_active_goal_markdown(root)
-    goals = read_goal_matrix_markdown(root)
+    active_goal = read_active_goal_markdown(root) if active_goal is None else active_goal
+    goals = merge_state_goals(root) if goals is None else goals
     path = root / ".goal-matrix" / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -810,7 +918,7 @@ def write_state_json(root):
             {
                 "schemaVersion": 1,
                 "activeGoal": active_goal,
-                "nextLoop": read_next_loop(root, active_goal),
+                "nextLoop": next_loop_from_goals(goals, active_goal),
                 "nextAction": next_action_payload(root, goals, active_goal),
                 "subagentCandidates": subagent_candidates(goals, active_goal),
                 "goalMatrix": goal_matrix_summary(goals, active_goal),
@@ -881,6 +989,85 @@ def append_goal_matrix_row(
     cells.append("Pending")
     text += markdown_table_row(cells) + "\n"
     path.write_text(text, encoding="utf-8")
+
+
+def render_goal_matrix(goals, title="Goal Matrix"):
+    extended = any(
+        any(goal.get(field) for field in ("dependencies", "risk", "parallelSafety"))
+        for goal in goals
+    )
+    header = EXTENDED_GOAL_MATRIX_HEADER if extended else GOAL_MATRIX_HEADER
+    separator = EXTENDED_GOAL_MATRIX_SEPARATOR if extended else GOAL_MATRIX_SEPARATOR
+    lines = [f"# {title}", "", header, separator]
+    for goal in goals:
+        cells = [
+            goal.get("id", ""),
+            goal.get("userOutcome", ""),
+            goal.get("engineeringSlice", ""),
+            goal.get("truthSource", ""),
+            goal.get("verification", ""),
+        ]
+        if extended:
+            cells.extend(
+                [
+                    goal.get("dependencies", "none"),
+                    goal.get("risk", "medium"),
+                    goal.get("parallelSafety", "main thread only"),
+                ]
+            )
+        cells.append(goal.get("status", "Pending"))
+        lines.append(markdown_table_row(cells))
+    return "\n".join(lines) + "\n"
+
+
+def prune_project(root, keep_done):
+    root = Path(root)
+    if keep_done < 0:
+        print("--keep-done must be >= 0", file=sys.stderr)
+        return 2
+    problems = audit_project(root)
+    policy_only_problems = [
+        problem
+        for problem in problems
+        if not problem.startswith("Done goal ") and not problem.startswith("goal matrix drift: ")
+    ]
+    if policy_only_problems:
+        for problem in policy_only_problems:
+            print(problem, file=sys.stderr)
+        return 1
+
+    goals = read_goal_matrix(root)
+    active_goal = read_active_goal(root)
+    active_id = active_goal_id(active_goal)
+    done_goals = [goal for goal in goals if goal.get("status", "").lower() == "done"]
+    recent_done_ids = {goal.get("id") for goal in done_goals[-keep_done:]} if keep_done else set()
+    visible = []
+    archived = []
+    for goal in goals:
+        status = goal.get("status", "").lower()
+        goal_id = goal.get("id")
+        if goal_id == active_id or status != "done" or goal_id in recent_done_ids:
+            visible.append(goal)
+        else:
+            archived.append(goal)
+
+    goals_dir = root / ".goal-matrix" / "goals"
+    goals_dir.mkdir(parents=True, exist_ok=True)
+    (goals_dir / "goal-matrix.md").write_text(render_goal_matrix(visible), encoding="utf-8")
+    (goals_dir / "archive.md").write_text(render_goal_matrix(archived, "Goal Matrix Archive"), encoding="utf-8")
+    write_state_json(root, goals=goals, active_goal=active_goal)
+    print(
+        json.dumps(
+            {
+                "visible": len(visible),
+                "archived": len(archived),
+                "archive": ".goal-matrix/goals/archive.md",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
 
 
 def broad_prompt_items(prompt):
@@ -1800,11 +1987,14 @@ def project_status_context(root):
     next_loop = read_next_loop(root, active_goal)
     goals = read_goal_matrix(root)
     matrix = goal_matrix_summary(goals, active_goal)
-    child_goal_status = ", ".join(f"{goal['id']}={goal['status']}" for goal in goals[:8])
-    if len(goals) > 8:
-        child_goal_status += f", +{len(goals) - 8} more"
+    display_goals = visible_status_goals(root, goals, active_goal)
+    child_goal_status = ", ".join(f"{goal['id']}={goal['status']}" for goal in display_goals[:8])
+    if len(display_goals) > 8:
+        child_goal_status += f", +{len(display_goals) - 8} visible more"
+    archive_status = f"; {len(display_goals)} visible, {len(goals) - len(display_goals)} archived" if display_goals is not goals else ""
     matrix_status = (
         f"{matrix['total']} child goals; {matrix['done']} done; {matrix['pending']} pending"
+        + archive_status
         + (f": {child_goal_status}" if child_goal_status else "")
     )
 
@@ -1867,6 +2057,9 @@ def main():
     init_parser.add_argument("--type", choices=INITIALIZATION_TYPES, default="new-project")
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--root", default=".")
+    prune_parser = sub.add_parser("prune")
+    prune_parser.add_argument("--root", default=".")
+    prune_parser.add_argument("--keep-done", type=int, default=10)
     active_verify_parser = sub.add_parser("active-verify")
     active_verify_parser.add_argument("--root", default=".")
     doctor_parser = sub.add_parser("doctor")
@@ -1898,6 +2091,8 @@ def main():
         return checkpoint_project(args.root, verify_command, args.if_active)
     if args.cmd == "status":
         return status_project(args.root)
+    if args.cmd == "prune":
+        return prune_project(args.root, args.keep_done)
     if args.cmd == "active-verify":
         return active_verify(args.root)
     if args.cmd == "doctor":

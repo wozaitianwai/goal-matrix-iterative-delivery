@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.6-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.7-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -2966,6 +2967,158 @@ def test_state_json_is_canonical_after_start():
     assert status["goalMatrix"]["childGoals"][0]["userOutcome"] == "canonical machine state"
 
 
+def test_prune_archive_keeps_json_state_and_visible_recent_done():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        goals = [
+            {
+                "id": f"G{index}",
+                "userOutcome": f"Done {index}",
+                "engineeringSlice": "slice",
+                "truthSource": "tests",
+                "verification": f"pytest test_{index}",
+                "status": "Done",
+            }
+            for index in range(1, 5)
+        ]
+        goals.append(
+            {
+                "id": "G5",
+                "userOutcome": "Active slice",
+                "engineeringSlice": "slice",
+                "truthSource": "tests",
+                "verification": "pytest active",
+                "status": "Pending",
+            }
+        )
+        write_file(
+            root / ".goal-matrix" / "state.json",
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "activeGoal": "G5 - Active slice",
+                    "nextLoop": None,
+                    "nextAction": {},
+                    "subagentCandidates": [],
+                    "goalMatrix": {
+                        "total": len(goals),
+                        "done": 4,
+                        "pending": 1,
+                        "activeId": "G5",
+                        "childGoals": goals,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+
+        result = run_guard(["prune", "--root", tmp, "--keep-done", "1"])
+        status_result = run_guard(["status", "--root", tmp])
+        matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
+        archive_text = (root / ".goal-matrix" / "goals" / "archive.md").read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert "| G4 | Done 4 |" in matrix_text
+    assert "| G5 | Active slice |" in matrix_text
+    assert "| G3 | Done 3 |" not in matrix_text
+    assert "| G3 | Done 3 |" in archive_text
+    status = json.loads(status_result.stdout)
+    assert status["goalMatrix"]["total"] == 5
+    assert status["goalMatrix"]["pending"] == 1
+
+
+def test_audit_rejects_visible_done_goal_with_status_only_verification():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+| G1 | Weak proof | Record metadata | `.goal-matrix` status | `python3 core/goal_guard.py status --root .` | Done |
+""",
+        )
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "Done goal G1 verification cannot be metadata-only status" in result.stderr
+
+
+def test_audit_allows_compound_done_verification_with_status_and_real_check():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+| G1 | Strong proof | Verify after metadata readback | tests | `python3 core/goal_guard.py status --root . && python3 tests/test_goal_guard.py` | Done |
+""",
+        )
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_audit_rejects_visible_goal_matrix_drift_from_state_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        goal = {
+            "id": "G1",
+            "userOutcome": "JSON truth",
+            "engineeringSlice": "slice",
+            "truthSource": "tests",
+            "verification": "python3 tests/test_goal_guard.py",
+            "status": "Pending",
+        }
+        write_file(
+            root / ".goal-matrix" / "state.json",
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "activeGoal": "G1 - JSON truth",
+                    "nextLoop": None,
+                    "nextAction": {},
+                    "subagentCandidates": [],
+                    "goalMatrix": {
+                        "total": 1,
+                        "done": 0,
+                        "pending": 1,
+                        "activeId": "G1",
+                        "childGoals": [goal],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+| G1 | Edited by hand | slice | tests | python3 tests/test_goal_guard.py | Pending |
+""",
+        )
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "goal matrix drift: G1 userOutcome differs from state.json" in result.stderr
+
+
 def test_checkpoint_preserves_extended_matrix_fields():
     prompt = "剩余 backlog:\nP1 first item\nP2 second item\n"
     with tempfile.TemporaryDirectory() as tmp:
@@ -3258,6 +3411,65 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     doctor = json.loads(doctor_result.stdout)
     assert doctor["resume"]["nextAction"] == status["nextAction"]
     assert doctor["resume"]["subagentCandidates"] == status["subagentCandidates"]
+
+
+def test_continue_next_action_exposes_iteration_commands():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Dependencies | Risk | Parallel safety | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| G1 | First slice | Build first slice | Status JSON | `python3 --version` | none | P1 | sequential | Pending |
+| G2 | Next slice | Build next slice | Status JSON | `python3 --version` | G1 | P1 | sequential | Pending |
+""",
+        )
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            """# Active Goal
+
+Active goal: G1 - First slice
+Initialization type: iteration
+Policy impact: none
+Touched paths: tests/test_goal_guard.py
+Delivery boundary: first slice only
+Skipped: second slice
+Truth source: Status JSON
+Verification: python3 --version
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        status_result = run_guard(["status", "--root", tmp])
+        doctor_result = run_guard(["doctor", "--root", tmp])
+
+    assert status_result.returncode == 0, status_result.stderr
+    status = json.loads(status_result.stdout)
+    assert status["nextAction"]["type"] == "continue_active_goal"
+    assert status["nextAction"]["commands"] == {
+        "verify": shlex.join(["python3", "core/goal_guard.py", "active-verify", "--root", tmp]),
+        "checkpoint": shlex.join(
+            [
+                "python3",
+                "core/goal_guard.py",
+                "checkpoint",
+                "--root",
+                tmp,
+                "--",
+                "python3",
+                "core/goal_guard.py",
+                "active-verify",
+                "--root",
+                tmp,
+            ]
+        ),
+    }
+
+    assert doctor_result.returncode == 0, doctor_result.stderr
+    doctor = json.loads(doctor_result.stdout)
+    assert doctor["resume"]["nextAction"]["commands"] == status["nextAction"]["commands"]
 
 
 def test_doctor_runtime_contract_is_explicit():

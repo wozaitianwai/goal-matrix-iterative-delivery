@@ -10,6 +10,7 @@ from pathlib import Path
 
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 PUBLISH_WORKFLOW_GLOB = ".github/workflows/*.y*ml"
+COMMIT_APPROVAL_TRAILER = "goal-matrix-approval:"
 
 
 def git_lines(root, *args):
@@ -23,6 +24,15 @@ def git_lines(root, *args):
     return [line for line in result.stdout.splitlines() if line]
 
 
+def git_output(root, *args):
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
 def git_text(root, ref, path):
     result = subprocess.run(
         ["git", "-C", str(root), "show", f"{ref}:{path}"],
@@ -30,6 +40,12 @@ def git_text(root, ref, path):
         capture_output=True,
     )
     return result.stdout if result.returncode == 0 else None
+
+
+def has_worktree_changes(root):
+    if git_lines(root, "diff", "--name-only", "HEAD", "--"):
+        return True
+    return bool(git_lines(root, "ls-files", "--others", "--exclude-standard"))
 
 
 def changed_files(root):
@@ -54,6 +70,17 @@ def matches(path, patterns):
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
+def commit_has_approval_trailer(root):
+    if has_worktree_changes(root):
+        return False
+    message = git_output(root, "log", "-1", "--pretty=%B")
+    for line in message.splitlines():
+        key, _, value = line.partition(":")
+        if f"{key.lower()}:" == COMMIT_APPROVAL_TRAILER and value.strip():
+            return True
+    return False
+
+
 def package_version_only_bump(root, path):
     if path != "package.json":
         return False
@@ -76,9 +103,20 @@ def package_version_only_bump(root, path):
     return manifest.get("version") == version and changelog.is_file() and version in changelog.read_text(encoding="utf-8")
 
 
-def has_approval(policy):
+def has_approval(root, policy):
     value = os.environ.get(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV), "")
-    return value.lower() in {"1", "true", "yes", "approved"}
+    if value.lower() in {"1", "true", "yes", "approved"}:
+        return True
+    return commit_has_approval_trailer(root)
+
+
+def approval_source(root, policy):
+    value = os.environ.get(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV), "")
+    if value.lower() in {"1", "true", "yes", "approved"}:
+        return policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)
+    if commit_has_approval_trailer(root):
+        return "Goal-Matrix-Approval commit trailer"
+    return policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)
 
 
 def load_policy(root):
@@ -105,7 +143,8 @@ def main():
 
     root = Path(args.root).resolve()
     policy = load_policy(root)
-    approved = has_approval(policy)
+    approved = has_approval(root, policy)
+    source = approval_source(root, policy)
     problems = []
 
     for path in changed_files(root):
@@ -116,7 +155,7 @@ def main():
             and not approved
             and not package_version_only_bump(root, path)
         ):
-            problems.append(f"{path} requires approval via {policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)}")
+            problems.append(f"{path} requires approval via {source}")
         if publish_action_changed(root, path, policy.get("publishActionPatterns", [])) and not approved:
             problems.append(f"{path} publish action requires approval")
 

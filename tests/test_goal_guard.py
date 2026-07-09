@@ -14,7 +14,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.9-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.10-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -1026,6 +1026,82 @@ def test_governance_blocks_approval_required_paths_without_approval():
     assert denied.returncode == 1
     assert "package.json requires approval" in denied.stderr
     assert approved.returncode == 0, approved.stderr
+
+
+def test_governance_committed_approval_trailer_allows_clean_commit():
+    env_without_approval = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "approved package change",
+                "-m",
+                "Goal-Matrix-Approval: G154 user-approved release governance evidence",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env_without_approval,
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_governance_committed_approval_trailer_does_not_approve_worktree_changes():
+    env_without_approval = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "approved package change",
+                "-m",
+                "Goal-Matrix-Approval: G154 user-approved release governance evidence",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(root / "package.json", "{\"dirty\": true}\n")
+
+        denied = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env_without_approval,
+        )
+
+    assert denied.returncode == 1
+    assert "package.json requires approval" in denied.stderr
 
 
 def test_governance_allows_package_version_only_bump_without_approval():

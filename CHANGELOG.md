@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.10-codex.1 - 2026-07-09
+
+- Publish committed `Goal-Matrix-Approval:` trailer support so remote CI can verify governance-approved release commits without embedding local approval env in the workflow, under plugin version `0.1.10+codex.20260709231027`.
+- Supersede `v0.1.9-codex.1`, whose remote CI run started before complete governance approval evidence was available to the runner.
+- Pin Codex plugin marketplace install instructions to `v0.1.10-codex.1`.
+
 ## v0.1.9-codex.1 - 2026-07-09
 
 - Publish the archive trust-boundary docs, L3 remote-evidence freshness boundary, native pre-push enforcement boundary, and sensitive runtime path governance guardrails under plugin version `0.1.9+codex.20260709230213`.

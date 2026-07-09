@@ -13,7 +13,7 @@ Keep Codex work honest: one active slice, one truth source, one proof before han
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.8-codex.2
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.9-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
@@ -63,6 +63,7 @@ Checkpoint promotes the next goal in state; the runtime still has to continue ex
 - `.goal-matrix/state.json` is machine state; Markdown goal files are the human view.
 - Hooks guide/block; they do not run hidden work or push code.
 - Codex lifecycle adapter is the only lifecycle adapter in this package.
+- Codex hook enforcement covers Codex tool calls only; terminal git push requires the optional native pre-push hook.
 
 ## Publish Gate
 

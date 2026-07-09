@@ -17,6 +17,8 @@ Use `python3 core/goal_guard.py doctor --root .` before changing install method.
 
 Use `python3 core/goal_guard.py doctor --root . --fix` to recreate missing `.goal-matrix` docs, policy, notification templates, and the local notification gitignore entry. It does not overwrite existing project docs and does not install native git hooks.
 
+`doctor` reports `nativeHooks.prePushHookInstalled`; if it is `false`, terminal `git push` is not covered by the optional native hook. Install that boundary explicitly with `python3 scripts/install_adapter.py codex --target . --install-git-hook`.
+
 After migration, run:
 
 ```bash

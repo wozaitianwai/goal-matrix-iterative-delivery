@@ -122,6 +122,8 @@ Payload approvals for approval-required paths must be scoped to the active goal,
 
 After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status. Markdown goal files remain a human-readable projection and fallback for legacy state.
 
+`.goal-matrix/goals/archive.md` is an immutable read-only snapshot produced by prune; it is not part of drift detection and is not a trusted source of current goal state.
+
 Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
 
 Broad prompt handling: first generate a pending matrix with scope, truth source, verification, dependencies, risk, and parallel-safety metadata. Keep one scheduler/acceptance active goal in the main thread; optional subagents may only produce candidates or investigations. The main thread reviews outputs, runs the real verification, and checkpoints child goals one at a time.

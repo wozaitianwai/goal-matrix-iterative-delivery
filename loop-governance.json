@@ -6,6 +6,13 @@
     "infra/**",
     "schema/**",
     "migrations/**",
+    ".codex-plugin/plugin.json",
+    ".github/workflows/**",
+    "adapters/codex/hooks/**",
+    "adapters/codex/skills/**",
+    "core/goal_guard.py",
+    "scripts/check_governance.py",
+    "scripts/loop_audit.py",
     "package.json",
     "requirements.txt",
     "pyproject.toml"

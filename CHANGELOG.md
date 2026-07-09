@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.9-codex.1 - 2026-07-09
+
+- Publish the archive trust-boundary docs, L3 remote-evidence freshness boundary, native pre-push enforcement boundary, and sensitive runtime path governance guardrails under plugin version `0.1.9+codex.20260709230213`.
+- Pin Codex plugin marketplace install instructions to `v0.1.9-codex.1`.
+
 ## v0.1.8-codex.2 - 2026-07-09
 
 - Reissue v0.1.8 with CI-stable friction-budget tests for fresh GitHub runner checkouts under plugin version `0.1.8+codex.20260709213513`.

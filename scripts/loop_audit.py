@@ -46,6 +46,15 @@ def has_github_remote(root):
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def git_head(root):
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def unresolved_gaps(root):
     path = root / "LOOP.md"
     if not path.is_file():
@@ -69,29 +78,35 @@ def unresolved_gaps(root):
     return gaps
 
 
-def has_remote_run_evidence(root):
+def remote_run_evidence(root):
+    current_head = git_head(root)
+    evidence_heads = []
     path = root / "loop-run-log.md"
-    if not path.is_file():
-        return False
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record, dict):
-            continue
-        is_remote_ci = (
-            record.get("pattern") == "github-check-run"
-            or record.get("outcome") == "remote-ci-readback"
-        )
-        is_success = record.get("run_status") == "completed" and record.get("run_conclusion") == "success"
-        has_readback = bool(record.get("run_url")) and bool(record.get("head_sha"))
-        if is_remote_ci and is_success and has_readback:
-            return True
-    return False
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            is_remote_ci = (
+                record.get("pattern") == "github-check-run"
+                or record.get("outcome") == "remote-ci-readback"
+            )
+            is_success = record.get("run_status") == "completed" and record.get("run_conclusion") == "success"
+            has_readback = bool(record.get("run_url")) and bool(record.get("head_sha"))
+            if is_remote_ci and is_success and has_readback:
+                evidence_heads.append(str(record.get("head_sha")))
+    return {
+        "present": bool(evidence_heads),
+        "currentHead": bool(current_head and current_head in evidence_heads),
+        "currentHeadSha": current_head,
+        "evidenceHeadShas": sorted(set(evidence_heads)),
+    }
 
 
 def has_repeated_run_evidence(root):
@@ -238,7 +253,9 @@ def audit(root):
     signals["gapRegister"] = bool(gaps)
     signals["githubRemote"] = has_github_remote(root)
     signals["githubWorkflows"] = (root / ".github" / "workflows").is_dir()
-    signals["remoteRunEvidence"] = has_remote_run_evidence(root)
+    remote_evidence = remote_run_evidence(root)
+    signals["remoteRunEvidence"] = remote_evidence["present"]
+    signals["remoteRunEvidenceCurrentHead"] = remote_evidence["currentHead"]
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
     run_log_lines = run_log_line_count(root)
     signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
@@ -280,7 +297,7 @@ def audit(root):
         and signals["verifier"]
         and signals["githubRemote"]
         and signals["githubWorkflows"]
-        and signals["remoteRunEvidence"]
+        and signals["remoteRunEvidenceCurrentHead"]
     ):
         level = "L3"
     elif score >= 58 and signals["verifier"]:
@@ -303,6 +320,8 @@ def audit(root):
         blocked.append("GitHub workflow evidence is missing; L3 cannot be claimed.")
     if signals["githubRemote"] and signals["githubWorkflows"] and not signals["remoteRunEvidence"]:
         blocked.append("Remote workflow run evidence is missing; L3 cannot be claimed.")
+    if signals["remoteRunEvidence"] and not signals["remoteRunEvidenceCurrentHead"]:
+        blocked.append("Remote workflow run evidence is stale for current HEAD; append current-head readback after CI passes.")
     if not all(signals[name] for name in REQUIRED):
         recommendations.append("Restore missing L1 spine files.")
     if signals["runLogNeedsSummary"]:
@@ -327,12 +346,14 @@ def audit(root):
         "L3": "L3 remote CI loop evidence present.",
     }[level]
 
-    if not gaps:
-        next_action = "No unresolved loop-engineering gaps."
-    elif not signals["githubRemote"]:
+    if not signals["githubRemote"]:
         next_action = "Add GitHub remote, push, and read back the workflow result."
     elif not signals["remoteRunEvidence"]:
         next_action = "Append remote-ci-readback evidence after the workflow passes."
+    elif not signals["remoteRunEvidenceCurrentHead"]:
+        next_action = "Append current-head remote-ci-readback evidence after the workflow passes."
+    elif not gaps:
+        next_action = "No unresolved loop-engineering gaps."
     else:
         next_action = "Review L3 evidence and continue unresolved gap register."
 
@@ -349,6 +370,7 @@ def audit(root):
         "repoVersions": repo_versions,
         "governanceApprovalEnv": policy_approval_env,
         "frictionBudget": friction,
+        "remoteRunEvidence": remote_evidence,
         "assessment": assessment,
         "signals": signals,
         "unresolvedGaps": gaps,

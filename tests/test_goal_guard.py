@@ -718,6 +718,7 @@ def test_package_validator_requires_runtime_closure():
     required_runtime = (
         "core/goal_guard.py",
         "core/goal_native_hook.py",
+        "core/goal_policy.py",
         "core/goal_verification.py",
         "core/protocol.md",
         "core/templates/active-goal.md",
@@ -969,6 +970,10 @@ def test_loop_audit_reports_current_friction_budget():
         write_file(
             root / "core" / "goal_native_hook.py",
             (ROOT / "core" / "goal_native_hook.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_policy.py",
+            (ROOT / "core" / "goal_policy.py").read_text(encoding="utf-8"),
         )
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -4183,6 +4188,20 @@ def test_verification_helpers_are_in_subdomain_module():
         "verify": "python3 core/goal_guard.py active-verify --root .",
         "checkpoint": "python3 core/goal_guard.py checkpoint --root . -- python3 core/goal_guard.py active-verify --root .",
     }
+
+
+def test_policy_helpers_are_in_subdomain_module():
+    policy_path = ROOT / "core" / "goal_policy.py"
+    spec = importlib.util.spec_from_file_location("goal_policy", policy_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert callable(module.policy_gate)
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def collect_payload_paths(", "def policy_gate_problems(", "def policy_gate("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_policy.py" in read_text(path)
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

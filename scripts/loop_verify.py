@@ -26,6 +26,7 @@ CHECKS = (
             "scripts/lint_python.py",
             "core/goal_guard.py",
             "core/goal_native_hook.py",
+            "core/goal_policy.py",
             "scripts/install_adapter.py",
             "scripts/validate_plugin_package.py",
             "scripts/loop_audit.py",

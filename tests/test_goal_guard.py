@@ -719,6 +719,7 @@ def test_package_validator_requires_runtime_closure():
         "core/goal_guard.py",
         "core/goal_native_hook.py",
         "core/goal_policy.py",
+        "core/goal_projection.py",
         "core/goal_publish.py",
         "core/goal_verification.py",
         "core/protocol.md",
@@ -975,6 +976,10 @@ def test_loop_audit_reports_current_friction_budget():
         write_file(
             root / "core" / "goal_policy.py",
             (ROOT / "core" / "goal_policy.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_projection.py",
+            (ROOT / "core" / "goal_projection.py").read_text(encoding="utf-8"),
         )
         write_file(
             root / "core" / "goal_publish.py",
@@ -4227,6 +4232,34 @@ def test_publish_helpers_are_in_subdomain_module():
         assert signature not in guard
     for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
         assert "core/goal_publish.py" in read_text(path)
+
+
+def test_projection_helpers_are_in_subdomain_module():
+    projection_path = ROOT / "core" / "goal_projection.py"
+    spec = importlib.util.spec_from_file_location("goal_projection", projection_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(projection_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    row = module.markdown_table_row(["G1", "Keep | escaped"])
+    assert module.split_markdown_table_row(row) == ["G1", "Keep | escaped"]
+    goals = [
+        {"id": "G1", "status": "Done"},
+        {"id": "G2", "status": "Done"},
+        {"id": "G3", "status": "Pending"},
+    ]
+    visible, archived = module.split_goal_projections(goals, "G3 - Pending", 1)
+    assert [goal["id"] for goal in visible] == ["G2", "G3"]
+    assert [goal["id"] for goal in archived] == ["G1"]
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def split_markdown_table_row(", "def render_goal_matrix(", "def write_goal_projections("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_projection.py" in read_text(path)
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

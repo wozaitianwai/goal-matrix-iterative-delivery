@@ -482,7 +482,7 @@ def test_install_adapter_rejects_non_hook_instruction_adapters():
     assert "invalid choice" in result.stderr
 
 
-def test_install_adapter_global_codex_syncs_installed_skill():
+def test_install_adapter_rejects_legacy_global_scope_without_writing_skills():
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "CODEX_HOME": tmp}
         result = subprocess.run(
@@ -498,14 +498,14 @@ def test_install_adapter_global_codex_syncs_installed_skill():
             cwd=ROOT,
             env=env,
         )
-        installed = Path(tmp) / "skills" / "goal-matrix-iterative-delivery" / "SKILL.md"
-        verifier = Path(tmp) / "skills" / "loop-verifier" / "SKILL.md"
-        installed_text = installed.read_text(encoding="utf-8") if installed.is_file() else ""
-        verifier_text = verifier.read_text(encoding="utf-8") if verifier.is_file() else ""
+        skills = Path(tmp) / "skills"
 
-    assert result.returncode in {0, 2}, result.stderr
-    assert installed_text == read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
-    assert verifier_text == read_text("adapters/codex/skills/loop-verifier/SKILL.md")
+    assert result.returncode != 0
+    assert "--scope" in result.stderr
+    assert not skills.exists()
+    adapter_readme = read_text("adapters/codex/README.md")
+    assert "project-only" in adapter_readme
+    assert "only supported global install path" in adapter_readme
 
 
 def test_install_adapter_can_install_native_pre_push_hook():

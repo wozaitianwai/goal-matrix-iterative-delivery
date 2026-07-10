@@ -10,6 +10,7 @@ codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
 Use the pinned release tag for reproducible installs. Use the moving development branch only when testing unreleased changes.
+The marketplace commands above are the only supported global install path. `install_adapter.py` is project-only and never writes `$CODEX_HOME/skills`.
 
 Trust the plugin hooks in Codex Desktop, then restart Codex once.
 

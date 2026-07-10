@@ -77,7 +77,7 @@ It fails on dirty worktrees, open active goals, missing checkpoint evidence, mis
 
 ## Notifications
 
-Project setup creates optional notification settings. Use `/goal-notify status`, `/goal-notify test`, or `/goal-notify templates`; webhook secrets stay local or in `GOAL_MATRIX_WEBHOOK_URL`.
+Project setup creates optional notification settings. Use `/goal-notify status`, `/goal-notify test`, or `/goal-notify templates`. Tracked config may define popup and webhook presets, but webhook delivery requires the ignored `notifications.local.json` file or `GOAL_MATRIX_WEBHOOK_URL`.
 
 ## Package Checks
 

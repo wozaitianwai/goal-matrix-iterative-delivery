@@ -25,10 +25,13 @@ function createHarness() {
   return { events, commands, sentUserMessages };
 }
 
-function tempProject(config) {
+function tempProject(config, localConfig) {
   const root = mkdtempSync(join(tmpdir(), "goal-matrix-notify-"));
   mkdirSync(join(root, ".goal-matrix"), { recursive: true });
   writeFileSync(join(root, ".goal-matrix", "notifications.json"), JSON.stringify(config, null, 2));
+  if (localConfig) {
+    writeFileSync(join(root, ".goal-matrix", "notifications.local.json"), JSON.stringify(localConfig, null, 2));
+  }
   return root;
 }
 
@@ -97,6 +100,98 @@ test("disabled project notification config stays silent", async () => {
   assert.deepEqual(notifications, []);
 });
 
+test("tracked project config cannot enable webhook egress", async () => {
+  const root = tempProject({
+    enabled: true,
+    codexPopup: { enabled: false },
+    webhook: {
+      enabled: true,
+      events: ["session_start"],
+      url: "https://example.invalid/tracked-webhook",
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  const { events } = createHarness();
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    await events.get("session_start")({ reason: "startup" }, notifyContext(root, []));
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(fetchCalled, false);
+});
+
+test("tracked project config cannot select a webhook URL environment variable", async () => {
+  const root = tempProject({
+    enabled: true,
+    codexPopup: { enabled: false },
+    webhook: {
+      enabled: true,
+      events: ["session_start"],
+      urlEnv: "GOAL_MATRIX_UNRELATED_URL",
+    },
+  });
+  const originalUrl = process.env.GOAL_MATRIX_UNRELATED_URL;
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  const { events } = createHarness();
+  process.env.GOAL_MATRIX_UNRELATED_URL = "https://example.invalid/unrelated";
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    await events.get("session_start")({ reason: "startup" }, notifyContext(root, []));
+  } finally {
+    if (originalUrl === undefined) delete process.env.GOAL_MATRIX_UNRELATED_URL;
+    else process.env.GOAL_MATRIX_UNRELATED_URL = originalUrl;
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.equal(fetchCalled, false);
+});
+
+test("local notification config can explicitly enable webhook egress", async () => {
+  const root = tempProject(
+    {
+      enabled: true,
+      codexPopup: { enabled: false },
+      webhook: { events: ["session_start"] },
+    },
+    {
+      webhook: {
+        enabled: true,
+        url: "https://example.invalid/local-webhook",
+      },
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  const fetchCalls = [];
+  const { events } = createHarness();
+  globalThis.fetch = async (url) => {
+    fetchCalls.push(url);
+    return { ok: true, status: 200 };
+  };
+
+  try {
+    await events.get("session_start")({ reason: "startup" }, notifyContext(root, []));
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  assert.deepEqual(fetchCalls, ["https://example.invalid/local-webhook"]);
+});
+
 test("enabled webhook notification sends provider payload without chat", async () => {
   const root = tempProject({
     enabled: true,
@@ -105,7 +200,6 @@ test("enabled webhook notification sends provider payload without chat", async (
       enabled: true,
       events: ["session_start"],
       provider: "discord",
-      urlEnv: "GOAL_MATRIX_TEST_WEBHOOK_URL",
       presets: {
         discord: {
           method: "POST",
@@ -118,13 +212,13 @@ test("enabled webhook notification sends provider payload without chat", async (
       },
     },
   });
-  const originalUrl = process.env.GOAL_MATRIX_TEST_WEBHOOK_URL;
+  const originalUrl = process.env.GOAL_MATRIX_WEBHOOK_URL;
   const originalFetch = globalThis.fetch;
   const fetchCalls = [];
   const notifications = [];
   const { events, sentUserMessages } = createHarness();
 
-  process.env.GOAL_MATRIX_TEST_WEBHOOK_URL = "https://example.invalid/webhook";
+  process.env.GOAL_MATRIX_WEBHOOK_URL = "https://example.invalid/webhook";
   globalThis.fetch = async (url, options) => {
     fetchCalls.push({ url, options });
     return { ok: true, status: 200 };
@@ -134,9 +228,9 @@ test("enabled webhook notification sends provider payload without chat", async (
     await events.get("session_start")({ reason: "startup" }, notifyContext(root, notifications));
   } finally {
     if (originalUrl === undefined) {
-      delete process.env.GOAL_MATRIX_TEST_WEBHOOK_URL;
+      delete process.env.GOAL_MATRIX_WEBHOOK_URL;
     } else {
-      process.env.GOAL_MATRIX_TEST_WEBHOOK_URL = originalUrl;
+      process.env.GOAL_MATRIX_WEBHOOK_URL = originalUrl;
     }
     globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });

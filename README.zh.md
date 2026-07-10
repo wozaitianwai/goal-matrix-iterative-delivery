@@ -75,7 +75,7 @@ python3 core/goal_guard.py publish-gate --root .
 
 ## 项目通知
 
-初始化项目会创建可选通知设置。用 `/goal-notify status`、`/goal-notify test` 或 `/goal-notify templates` 查看；webhook secret 放本地文件或 `GOAL_MATRIX_WEBHOOK_URL`。
+初始化项目会创建可选通知设置。用 `/goal-notify status`、`/goal-notify test` 或 `/goal-notify templates` 查看。tracked 配置只能定义弹窗和 webhook 模板；webhook 发送必须由已忽略的 `notifications.local.json` 或 `GOAL_MATRIX_WEBHOOK_URL` 显式启用。
 
 ## 插件检查
 

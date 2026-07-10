@@ -45,7 +45,7 @@ Checkpoint promotes the next goal in state; the runtime still has to continue ex
 
 The packaged `pi.extensions` entry loads `pi-extension/index.js`, which registers `/goal-notify`. It uses `ctx.ui.notify` for Codex popup notifications; it does not send chat messages for notification status.
 
-Project initialization creates notification settings and gitignores the local secret override file. Common webhook payload presets are available through `/goal-notify templates`; enable webhook delivery in project config and keep real URLs in the local override file or `GOAL_MATRIX_WEBHOOK_URL`.
+Project initialization creates notification settings and gitignores the local secret override file. Tracked config may define common webhook payload presets, but it cannot enable delivery or select the URL source. Opt in through `notifications.local.json` or `GOAL_MATRIX_WEBHOOK_URL`.
 
 ## Local Package Check
 

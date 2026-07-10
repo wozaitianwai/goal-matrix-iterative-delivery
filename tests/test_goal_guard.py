@@ -719,6 +719,7 @@ def test_package_validator_requires_runtime_closure():
         "core/goal_guard.py",
         "core/goal_native_hook.py",
         "core/goal_policy.py",
+        "core/goal_publish.py",
         "core/goal_verification.py",
         "core/protocol.md",
         "core/templates/active-goal.md",
@@ -974,6 +975,10 @@ def test_loop_audit_reports_current_friction_budget():
         write_file(
             root / "core" / "goal_policy.py",
             (ROOT / "core" / "goal_policy.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_publish.py",
+            (ROOT / "core" / "goal_publish.py").read_text(encoding="utf-8"),
         )
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -4202,6 +4207,26 @@ def test_policy_helpers_are_in_subdomain_module():
         assert signature not in guard
     for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
         assert "core/goal_policy.py" in read_text(path)
+
+
+def test_publish_helpers_are_in_subdomain_module():
+    publish_path = ROOT / "core" / "goal_publish.py"
+    spec = importlib.util.spec_from_file_location("goal_publish", publish_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(publish_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    assert callable(module.publish_gate)
+    assert module.command_is_git_push("git -C . push origin main")
+    assert not module.command_is_git_push("git status")
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def command_is_git_push(", "def publish_state_problems(", "def publish_gate("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_publish.py" in read_text(path)
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

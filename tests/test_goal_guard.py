@@ -2323,6 +2323,27 @@ def test_policy_gate_debug_reports_paths_and_commands():
     assert "protected command" in result.stderr
 
 
+def test_policy_gate_fails_closed_for_invalid_existing_policy():
+    cases = (
+        ("{broken", "invalid project policy JSON"),
+        ("[]", "top-level value must be an object"),
+        ('{"version": 2}', "expected 1"),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        policy_path = root / ".goal-matrix" / "project-policy.json"
+        policy_path.parent.mkdir(parents=True)
+
+        missing = run_guard(["policy-gate", "--root", tmp, "--hook"], "{}")
+        assert missing.returncode == 0, missing.stderr
+
+        for contents, diagnostic in cases:
+            write_file(policy_path, contents)
+            result = run_guard(["policy-gate", "--root", tmp, "--hook"], "{}")
+            assert result.returncode == 1
+            assert diagnostic in result.stderr
+
+
 def test_user_prompt_submit_triggers_for_self_evolution_runs():
     prompt = json.dumps({"prompt": "开始自我进化，连续迭代到预算、阻塞或没有 pending goal"})
     result = run_guard(["hook", "UserPromptSubmit"], prompt)
@@ -3435,7 +3456,7 @@ def test_publish_gate_hook_rejects_publish_action_patterns():
             repo = make_publish_repo(Path(tmp))
             write_file(
                 repo / ".goal-matrix" / "project-policy.json",
-                json.dumps({"publishActionPatterns": ["npm publish", "gh release"]}, indent=2) + "\n",
+                json.dumps({"version": 1, "publishActionPatterns": ["npm publish", "gh release"]}, indent=2) + "\n",
             )
             subprocess.run(["git", "add", ".goal-matrix"], cwd=repo, check=True, capture_output=True, text=True)
             subprocess.run(

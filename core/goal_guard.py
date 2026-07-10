@@ -282,15 +282,23 @@ def prompt_text(raw):
     return str(data.get("prompt", ""))
 
 
-def read_project_policy(root):
+def load_project_policy(root):
     policy_path = Path(root) / ".goal-matrix" / "project-policy.json"
     if not policy_path.is_file():
-        return {}
+        return {}, None
     try:
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    return policy if isinstance(policy, dict) else {}
+    except json.JSONDecodeError as exc:
+        return {}, f"invalid project policy JSON: {exc.msg}"
+    if not isinstance(policy, dict):
+        return {}, "invalid project policy: top-level value must be an object"
+    if policy.get("version") != 1:
+        return {}, "invalid project policy version: expected 1"
+    return policy, None
+
+
+def read_project_policy(root):
+    return load_project_policy(root)[0]
 
 
 def read_plugin_governance(root):
@@ -444,16 +452,9 @@ def audit_project(root):
     if not policy_path.is_file():
         return ["missing project policy: .goal-matrix/project-policy.json"]
 
-    try:
-        policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"invalid project policy JSON: {exc.msg}"]
-
-    if not isinstance(policy, dict):
-        return ["invalid project policy: top-level value must be an object"]
-
-    if policy.get("version") != 1:
-        problems.append("invalid project policy version: expected 1")
+    policy, policy_problem = load_project_policy(root)
+    if policy_problem:
+        return [policy_problem]
 
     if policy.get("initializationType") not in INITIALIZATION_TYPES:
         problems.append("invalid project policy initializationType")
@@ -1630,7 +1631,9 @@ def protected_command_matches(command, protected):
 
 def policy_gate_problems(root, raw):
     root = Path(root)
-    policy = read_project_policy(root)
+    policy, policy_problem = load_project_policy(root)
+    if policy_problem:
+        return [policy_problem]
     if not policy:
         return []
 
@@ -1662,10 +1665,6 @@ def policy_gate_debug(root, raw):
 
 def policy_gate(root, hook_mode=False, debug=False):
     raw = sys.stdin.read()
-    if hook_mode and not raw.strip():
-        if debug:
-            print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
-        return 0
     if debug:
         print(json.dumps(policy_gate_debug(root, raw), ensure_ascii=False))
     problems = policy_gate_problems(root, raw)

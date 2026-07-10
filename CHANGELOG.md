@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.11-codex.2 - 2026-07-10
+
+- Reissue `v0.1.11` after making the direct GitHub Actions Python test runner hermetic: fixtures clear inherited `GITHUB_*` variables and inject only the CI context they intend to test.
+- Keep `v0.1.11-codex.1` immutable as the failed-CI tag; publish the corrected plugin under version `0.1.11+codex.20260710005948`.
+- Pin Codex plugin marketplace install instructions to `v0.1.11-codex.2`.
+
 ## v0.1.11-codex.1 - 2026-07-10
 
 - Publish the governance remediation: JSON-owned goal state and generated Markdown projection, current-head L3 CI enforcement, actor-scoped complete-range governance, and package runtime-closure validation under plugin version `0.1.11+codex.20260710005049`.

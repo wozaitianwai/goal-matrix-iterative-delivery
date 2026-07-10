@@ -9,13 +9,19 @@ import tempfile
 from pathlib import Path
 
 
+# Keep fixtures deterministic; GitHub scenarios below inject their own context.
+for _key in tuple(os.environ):
+    if _key.startswith("GITHUB_"):
+        os.environ.pop(_key)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "core" / "goal_guard.py"
 PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.11-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.11-codex.2"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",

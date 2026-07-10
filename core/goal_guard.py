@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from goal_native_hook import inspect_native_pre_push_hook, native_pre_push_hook_path
     from goal_verification import (
         active_goal_iteration_commands,
         is_metadata_only_verification,
@@ -21,6 +22,7 @@ try:
         write_checkpoint_evidence,
     )
 except ImportError:
+    from core.goal_native_hook import inspect_native_pre_push_hook, native_pre_push_hook_path
     from core.goal_verification import (
         active_goal_iteration_commands,
         is_metadata_only_verification,
@@ -1518,10 +1520,18 @@ def doctor_project(root, fix=False):
         ),
     }
     runtime = doctor_runtime_hints(root)
-    pre_push = root / ".git" / "hooks" / "pre-push"
+    pre_push = native_pre_push_hook_path(root)
+    hook_state = inspect_native_pre_push_hook(pre_push, plugin_root / "core" / "goal_guard.py")
     native_hooks = {
         "prePushHookPath": str(pre_push),
-        "prePushHookInstalled": pre_push.is_file(),
+        "prePushHookInstalled": hook_state["current"],
+        "prePushHookExists": hook_state["exists"],
+        "prePushHookManaged": hook_state["managed"],
+        "prePushHookState": hook_state["state"],
+        "prePushHookExecutable": hook_state["executable"],
+        "prePushHookGuardPath": hook_state["guardPath"],
+        "expectedGuardPath": hook_state["expectedGuardPath"],
+        "refreshRequired": hook_state["refreshRequired"],
         "installCommand": f"python3 scripts/install_adapter.py codex --target {shlex.quote(str(root))} --install-git-hook",
     }
     print(

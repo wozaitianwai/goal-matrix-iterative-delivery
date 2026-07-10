@@ -35,7 +35,7 @@ python3 scripts/install_adapter.py codex --target /path/to/project
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
 
-初始化只写 `.goal-matrix/` 文件。若已有原生 hook，安装器会保留到 `.git/hooks/pre-push.goal-matrix.previous`。
+初始化只写 `.goal-matrix/` 文件。使用 `--install-git-hook` 时，未托管的原生 hook 只会被保留一次到同目录的 `pre-push.goal-matrix.previous`；再次执行命令会原地刷新已托管的 stale/broken wrapper。`doctor` 会报告 `absent`、`unmanaged`、`current`、`stale` 或 `broken`，不会隐式安装 hook。
 
 ## 日常循环
 

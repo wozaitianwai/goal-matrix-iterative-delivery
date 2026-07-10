@@ -27,7 +27,7 @@ To also enforce publish policy for shell or manual pushes:
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
 
-If `.git/hooks/pre-push` already exists, the installer chains it from `.git/hooks/pre-push.goal-matrix.previous`. To restore the original hook, move that file back to `.git/hooks/pre-push`.
+If an unmanaged `pre-push` already exists, the installer chains it once from the sibling `pre-push.goal-matrix.previous`. A managed stale/broken wrapper is refreshed in place when the command is rerun. Use `goal_guard.py doctor --root .` to read `prePushHookState` and the effective path, including custom `core.hooksPath` repositories.
 
 ## Files
 

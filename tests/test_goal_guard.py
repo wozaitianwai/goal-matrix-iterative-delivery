@@ -436,6 +436,9 @@ def test_native_pre_push_boundary_is_documented():
         assert phrase in readme
     assert "shell or manual pushes" in adapter
     assert "prePushHookInstalled" in operations
+    assert "prePushHookState" in operations
+    for state in ("absent", "unmanaged", "current", "stale", "broken"):
+        assert state in operations
     assert "python3 scripts/install_adapter.py codex --target . --install-git-hook" in operations
 
 
@@ -531,7 +534,8 @@ def test_install_adapter_can_install_native_pre_push_hook():
     assert result.returncode == 0, result.stderr
     assert hook_exists
     assert hook_is_executable
-    assert "goal_guard.py\" publish-gate --root \"$repo_root\"" in hook_text
+    assert "goal-matrix-managed-pre-push:v1" in hook_text
+    assert 'python3 "$goal_guard" publish-gate --root "$repo_root"' in hook_text
     assert hook_result.returncode == 1
     assert "uncommitted changes" in hook_result.stderr
 
@@ -572,9 +576,84 @@ def test_install_adapter_chains_existing_native_pre_push_hook():
     assert result.returncode == 0, result.stderr
     assert previous_exists
     assert previous_text == "#!/bin/sh\nprintf chained > chained-hook.txt\n"
-    assert "pre-push.goal-matrix.previous" in hook_text
+    assert '${0}.goal-matrix.previous' in hook_text
     assert hook_result.returncode == 0, hook_result.stderr
     assert chained_text == "chained"
+
+
+def test_install_adapter_refreshes_legacy_stale_hook_without_rechaining():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = make_publish_repo(Path(tmp))
+        hook = target / ".git" / "hooks" / "pre-push"
+        previous = target / ".git" / "hooks" / "pre-push.goal-matrix.previous"
+        stale_guard = Path(tmp) / "old-plugin" / "core" / "goal_guard.py"
+        write_file(
+            hook,
+            f'''#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+python3 "{stale_guard}" publish-gate --root "$repo_root"
+previous_hook="$repo_root/.git/hooks/pre-push.goal-matrix.previous"
+''',
+        )
+        hook.chmod(0o755)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(target),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        refreshed = hook.read_text(encoding="utf-8")
+        previous_exists = previous.exists()
+
+    assert result.returncode == 0, result.stderr
+    assert "goal-matrix-managed-pre-push:v1" in refreshed
+    assert str(ROOT / "core" / "goal_guard.py") in refreshed
+    assert str(stale_guard) not in refreshed
+    assert previous_exists is False
+
+
+def test_install_adapter_and_doctor_respect_custom_hooks_path():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = make_publish_repo(Path(tmp))
+        subprocess.run(
+            ["git", "config", "core.hooksPath", ".githooks"],
+            cwd=target,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(target),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        doctor = run_guard(["doctor", "--root", str(target)])
+        hook = target / ".githooks" / "pre-push"
+        hook_exists = hook.is_file()
+        hook_path = str(hook.resolve())
+
+    assert result.returncode == 0, result.stderr
+    assert hook_exists
+    native_hooks = json.loads(doctor.stdout)["nativeHooks"]
+    assert native_hooks["prePushHookPath"] == hook_path
+    assert native_hooks["prePushHookState"] == "current"
 
 
 def test_readmes_document_native_pre_push_hook_restore_path():
@@ -636,6 +715,7 @@ def test_package_validator_checks_current_repo():
 def test_package_validator_requires_runtime_closure():
     required_runtime = (
         "core/goal_guard.py",
+        "core/goal_native_hook.py",
         "core/goal_verification.py",
         "core/protocol.md",
         "core/templates/active-goal.md",
@@ -883,6 +963,10 @@ def test_loop_audit_reports_current_friction_budget():
         write_file(
             root / "core" / "goal_verification.py",
             (ROOT / "core" / "goal_verification.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_native_hook.py",
+            (ROOT / "core" / "goal_native_hook.py").read_text(encoding="utf-8"),
         )
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -4708,7 +4792,61 @@ def test_doctor_reports_native_pre_push_hook_install_hint():
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["nativeHooks"]["prePushHookInstalled"] is False
+    assert payload["nativeHooks"]["prePushHookExists"] is False
+    assert payload["nativeHooks"]["prePushHookState"] == "absent"
     assert "--install-git-hook" in payload["nativeHooks"]["installCommand"]
+
+
+def test_doctor_reports_current_stale_and_broken_managed_pre_push_hooks():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        install = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(repo),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        hook = repo / ".git" / "hooks" / "pre-push"
+        current = run_guard(["doctor", "--root", str(repo)])
+
+        expected_guard = ROOT / "core" / "goal_guard.py"
+        stale_guard = Path(tmp) / "old-plugin" / "core" / "goal_guard.py"
+        hook.write_text(
+            hook.read_text(encoding="utf-8").replace(str(expected_guard), str(stale_guard)),
+            encoding="utf-8",
+        )
+        stale = run_guard(["doctor", "--root", str(repo)])
+
+        hook.write_text(
+            hook.read_text(encoding="utf-8").replace(str(stale_guard), str(expected_guard)),
+            encoding="utf-8",
+        )
+        hook.chmod(0o644)
+        broken = run_guard(["doctor", "--root", str(repo)])
+
+    assert install.returncode == 0, install.stderr
+    current_hooks = json.loads(current.stdout)["nativeHooks"]
+    assert current_hooks["prePushHookState"] == "current"
+    assert current_hooks["prePushHookInstalled"] is True
+    assert current_hooks["prePushHookManaged"] is True
+    assert current_hooks["prePushHookGuardPath"] == str(expected_guard)
+
+    stale_hooks = json.loads(stale.stdout)["nativeHooks"]
+    assert stale_hooks["prePushHookState"] == "stale"
+    assert stale_hooks["prePushHookInstalled"] is False
+    assert stale_hooks["refreshRequired"] is True
+
+    broken_hooks = json.loads(broken.stdout)["nativeHooks"]
+    assert broken_hooks["prePushHookState"] == "broken"
+    assert broken_hooks["prePushHookInstalled"] is False
+    assert broken_hooks["prePushHookExecutable"] is False
 
 
 def test_gate_command_returns_design_for_missing_design_evidence():

@@ -18,6 +18,7 @@ ASSETS = (
     "package.json",
     "assets/icon.png",
     "core/goal_guard.py",
+    "core/goal_native_hook.py",
     "core/goal_verification.py",
     "core/protocol.md",
     "core/templates/active-goal.md",

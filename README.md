@@ -35,7 +35,7 @@ Optional native push guard:
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
 
-Setup writes `.goal-matrix/` files only. If a native hook already exists, it is preserved as `.git/hooks/pre-push.goal-matrix.previous`.
+Setup writes `.goal-matrix/` files only. With `--install-git-hook`, an unmanaged native hook is preserved once as the sibling `pre-push.goal-matrix.previous`; rerunning the command refreshes a managed stale/broken wrapper in place. `doctor` reports `absent`, `unmanaged`, `current`, `stale`, or `broken` and never installs the hook implicitly.
 
 ## Daily Loop
 

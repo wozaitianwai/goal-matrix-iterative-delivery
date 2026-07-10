@@ -2,6 +2,7 @@
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,32 +33,31 @@ def sync_codex_global():
 
 
 def install_native_pre_push_hook(target):
-    git_dir = target / ".git"
-    if not git_dir.is_dir():
+    from core.goal_native_hook import (
+        inspect_native_pre_push_hook,
+        native_pre_push_hook_path,
+        native_pre_push_hook_text,
+    )
+
+    inside = subprocess.run(
+        ["git", "-C", str(target), "rev-parse", "--git-dir"],
+        text=True,
+        capture_output=True,
+    )
+    if inside.returncode:
         raise SystemExit("--install-git-hook requires an initialized git repository")
-    hook = git_dir / "hooks" / "pre-push"
-    previous = git_dir / "hooks" / "pre-push.goal-matrix.previous"
-    if hook.exists():
-        existing = hook.read_text(encoding="utf-8", errors="ignore")
-        if "goal_guard.py" in existing and "publish-gate" in existing:
-            return hook
+    hook = native_pre_push_hook_path(target)
+    previous = hook.with_name("pre-push.goal-matrix.previous")
+    guard_path = ROOT / "core" / "goal_guard.py"
+    state = inspect_native_pre_push_hook(hook, guard_path)
+    if state["current"]:
+        return hook
+    if state["exists"] and not state["managed"]:
         if previous.exists():
             raise SystemExit(f"{hook} and {previous} already exist; restore or merge the hook manually")
         hook.rename(previous)
-    hook.write_text(
-        f"""#!/bin/sh
-set -eu
-repo_root=$(git rev-parse --show-toplevel)
-python3 "{ROOT / "core" / "goal_guard.py"}" publish-gate --root "$repo_root"
-previous_hook="$repo_root/.git/hooks/pre-push.goal-matrix.previous"
-if [ -x "$previous_hook" ]; then
-  "$previous_hook" "$@"
-elif [ -f "$previous_hook" ]; then
-  sh "$previous_hook" "$@"
-fi
-""",
-        encoding="utf-8",
-    )
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(native_pre_push_hook_text(guard_path), encoding="utf-8")
     hook.chmod(0o755)
     return hook
 

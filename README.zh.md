@@ -40,10 +40,25 @@ python3 scripts/install_adapter.py codex --target /path/to/project --install-git
 ## 日常循环
 
 ```bash
-printf '修复下一个有边界的目标' | python3 core/goal_guard.py start --root .
+python3 core/goal_guard.py start --root . <<'JSON'
+{
+  "userOutcome": "修复下一个有边界的目标",
+  "engineeringSlice": "只修改一个可验证行为",
+  "initializationType": "iteration",
+  "policyImpact": "none",
+  "touchedPaths": ["src/module.py"],
+  "deliveryBoundary": "仅限当前行为",
+  "skipped": "无关工作",
+  "truthSource": "tests",
+  "verification": "python3 -m unittest",
+  "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint"
+}
+JSON
 python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
+
+plain text 输入只会创建被阻断的 draft；实现前必须提供上面的结构化 contract。
 
 流程保持很小：
 

@@ -53,6 +53,8 @@ Verification: <smallest real check>
 Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 ```
 
+Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Plain text input creates a blocked draft; do not execute or checkpoint it.
+
 ## Loop Engineering
 
 Engineering pass:

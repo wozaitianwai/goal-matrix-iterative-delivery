@@ -40,10 +40,25 @@ Setup writes `.goal-matrix/` files only. If a native hook already exists, it is 
 ## Daily Loop
 
 ```bash
-printf 'fix the next bounded goal' | python3 core/goal_guard.py start --root .
+python3 core/goal_guard.py start --root . <<'JSON'
+{
+  "userOutcome": "Fix the next bounded goal",
+  "engineeringSlice": "Change one verified behavior",
+  "initializationType": "iteration",
+  "policyImpact": "none",
+  "touchedPaths": ["src/module.py"],
+  "deliveryBoundary": "this behavior only",
+  "skipped": "unrelated work",
+  "truthSource": "tests",
+  "verification": "python3 -m unittest",
+  "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint"
+}
+JSON
 python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
+
+Plain text input creates a blocked draft. Use the structured contract above before implementation.
 
 The loop stays small:
 

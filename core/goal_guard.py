@@ -487,6 +487,7 @@ def audit_project(root):
 
     problems.extend(audit_visible_goal_matrix_drift(root))
     problems.extend(audit_active_goal_projection_drift(root))
+    problems.extend(audit_active_goal_contract(root))
     problems.extend(audit_visible_done_goal_verification(root))
 
     return problems
@@ -737,6 +738,52 @@ def audit_active_goal_projection_drift(root):
     return []
 
 
+def active_goal_contract_problems(goal):
+    required = (
+        "userOutcome",
+        "engineeringSlice",
+        "initializationType",
+        "policyImpact",
+        "touchedPaths",
+        "deliveryBoundary",
+        "skipped",
+        "truthSource",
+        "verification",
+        "developmentFlow",
+    )
+    problems = []
+    for field in required:
+        value = goal.get(field)
+        if not isinstance(value, str) or not value.strip():
+            problems.append(f"missing {field}")
+    if goal.get("initializationType") not in INITIALIZATION_TYPES:
+        problems.append("invalid initializationType")
+    if goal.get("policyImpact") not in ("none", "approval-required", "blocked"):
+        problems.append("invalid policyImpact")
+    if str(goal.get("touchedPaths", "")).strip().lower() == "tbd":
+        problems.append("touchedPaths cannot be TBD")
+    if goal.get("engineeringSlice") == "Start one bounded child goal":
+        problems.append("engineeringSlice cannot be the default placeholder")
+    verification = goal.get("verification")
+    if isinstance(verification, str) and verification_is_metadata_status(verification):
+        problems.append("verification cannot be metadata-only status")
+    return problems
+
+
+def audit_active_goal_contract(root):
+    if not state_goal_matrix_available(root):
+        return []
+    active_id = active_goal_id(read_active_goal(root))
+    if not active_id:
+        return []
+    goal = next((item for item in read_goal_matrix(root) if item.get("id") == active_id), None)
+    if not goal or "contractComplete" not in goal:
+        return []
+    if goal.get("contractComplete") is not True:
+        return ["active goal contract is incomplete: use structured start input"]
+    return [f"active goal contract is invalid: {problem}" for problem in active_goal_contract_problems(goal)]
+
+
 def audit_visible_done_goal_verification(root):
     problems = []
     for goal in read_goal_matrix_markdown(root):
@@ -977,6 +1024,40 @@ def first_prompt_line(text):
     return "Start next goal"
 
 
+def structured_start_contract(text):
+    try:
+        value = json.loads(text.lstrip("\ufeff").strip())
+    except (json.JSONDecodeError, TypeError):
+        return None, []
+    if not isinstance(value, dict) or "userOutcome" not in value:
+        return None, []
+
+    touched_paths = value.get("touchedPaths")
+    if isinstance(touched_paths, list) and all(isinstance(path, str) for path in touched_paths):
+        touched_paths = ", ".join(path.strip() for path in touched_paths if path.strip())
+    verification = value.get("verification")
+    if isinstance(verification, str):
+        verification = normalized_verification(verification)
+    contract = {
+        "userOutcome": value.get("userOutcome"),
+        "engineeringSlice": value.get("engineeringSlice"),
+        "initializationType": value.get("initializationType"),
+        "policyImpact": value.get("policyImpact"),
+        "touchedPaths": touched_paths,
+        "deliveryBoundary": value.get("deliveryBoundary"),
+        "skipped": value.get("skipped"),
+        "truthSource": value.get("truthSource"),
+        "verification": verification,
+        "developmentFlow": value.get("developmentFlow"),
+        "contractComplete": True,
+        "dependencies": value.get("dependencies", "none"),
+        "risk": value.get("risk", "medium"),
+        "parallelSafety": value.get("parallelSafety", "main thread only"),
+        "status": "Pending",
+    }
+    return contract, active_goal_contract_problems(contract)
+
+
 GOAL_MATRIX_HEADER = "| Goal | User outcome | Engineering slice | Truth source | Verification | Status |"
 GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- |"
 EXTENDED_GOAL_MATRIX_HEADER = (
@@ -1169,13 +1250,6 @@ def goal_id_after(goal_id, offset):
 
 def start_project(root, prompt):
     root = Path(root)
-    problems = audit_project(root)
-    if problems:
-        for problem in problems:
-            print(problem, file=sys.stderr)
-        return 1
-    goals_dir = root / ".goal-matrix" / "goals"
-    goals_dir.mkdir(parents=True, exist_ok=True)
     goals = [
         goal
         for goal in read_goal_matrix(root)
@@ -1186,7 +1260,31 @@ def start_project(root, prompt):
         print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
         return 0
 
+    problems = audit_project(root)
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        return 1
+    contract, contract_problems = structured_start_contract(prompt)
+    if contract_problems:
+        for problem in contract_problems:
+            print(f"invalid start contract: {problem}", file=sys.stderr)
+        return 2
+
+    goals_dir = root / ".goal-matrix" / "goals"
+    goals_dir.mkdir(parents=True, exist_ok=True)
+
     goal_id = next_goal_id(goals)
+    if contract:
+        goal = {"id": goal_id, **contract}
+        active_goal = active_goal_title(goal)
+        goals.append(goal)
+        write_active_goal_from_goal(root, goal)
+        write_state_json(root, goals=goals, active_goal=active_goal)
+        write_goal_matrix_projection(root, goals, active_goal)
+        print(json.dumps({"activeGoal": active_goal, "root": str(root), "structured": True}, ensure_ascii=False, indent=2))
+        return 0
+
     items = broad_prompt_items(prompt)
     self_evolution_seed = False
     if not items and wants_self_evolution(prompt):
@@ -1222,6 +1320,7 @@ def start_project(root, prompt):
             "deliveryBoundary": boundary,
             "skipped": skipped,
             "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+            "contractComplete": True,
             "dependencies": "none",
             "risk": "medium",
             "parallelSafety": "main thread only",
@@ -1266,6 +1365,7 @@ def start_project(root, prompt):
         "deliveryBoundary": "one bounded child goal from the current prompt",
         "skipped": "unrelated work",
         "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+        "contractComplete": False,
         "status": "Pending",
     }
     goals.append(goal)
@@ -1303,6 +1403,11 @@ def checkpoint_project(root, verify_command, if_active=False):
         if if_active:
             return 0
         print("missing active goal", file=sys.stderr)
+        return 1
+    contract_problems = audit_active_goal_contract(root)
+    if contract_problems:
+        for problem in contract_problems:
+            print(f"checkpoint blocked: {problem}", file=sys.stderr)
         return 1
 
     result = subprocess.run(verify_command, cwd=root, text=True, capture_output=True)

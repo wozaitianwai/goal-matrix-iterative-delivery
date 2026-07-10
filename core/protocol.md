@@ -57,13 +57,28 @@ Use the shared guard to create the baseline files for a target project:
 ```bash
 printf '新项目立项...' | python3 core/goal_guard.py classify
 python3 core/goal_guard.py init --root /path/to/project --type iteration
-printf '修复下一个有边界的目标' | python3 core/goal_guard.py start --root /path/to/project
+python3 core/goal_guard.py start --root /path/to/project <<'JSON'
+{
+  "userOutcome": "修复下一个有边界的目标",
+  "engineeringSlice": "只修改一个可验证行为",
+  "initializationType": "iteration",
+  "policyImpact": "none",
+  "touchedPaths": ["src/", "tests/"],
+  "deliveryBoundary": "仅限当前行为",
+  "skipped": "无关工作",
+  "truthSource": "tests",
+  "verification": "python3 -m unittest",
+  "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint"
+}
+JSON
 python3 core/goal_guard.py checkpoint --root /path/to/project -- python3 scripts/loop_verify.py
 ```
 
 The command creates missing `.goal-matrix` files from `core/templates/`, creates `specs/` and `goals/`, writes the requested initialization type into a new policy file, and does not overwrite existing project files.
 
 After initialization, fill `.goal-matrix/project-context.md` with the project charter, work classification, and lifecycle support cycle. This is the project立项 record: idea source, user/operator, success criteria, support horizon, retirement trigger, work type, risk, primary surface, approval needs, and the stage-by-stage support loop.
+
+`start` accepts the structured JSON contract above. Plain text remains a compatibility path that creates an incomplete draft; audit and checkpoint block that draft until the JSON state is repaired.
 
 ## Active goal contract
 

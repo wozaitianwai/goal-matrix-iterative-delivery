@@ -49,6 +49,22 @@ def run_guard(args, text="", cwd=ROOT, env=None):
     )
 
 
+def run_structured_start(root, title, verification="python3 --version"):
+    contract = {
+        "userOutcome": title,
+        "engineeringSlice": f"Implement {title}",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["tests/test_goal_guard.py"],
+        "deliveryBoundary": f"{title} only",
+        "skipped": "unrelated work",
+        "truthSource": "test readback",
+        "verification": verification,
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    return run_guard(["start", "--root", str(root)], json.dumps(contract))
+
+
 def hook_context(payload):
     return payload["hookSpecificOutput"]["additionalContext"]
 
@@ -110,6 +126,31 @@ def test_core_protocol_defines_loop_engineering_contract():
         "Next loop",
     ):
         assert phrase in text
+
+
+def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
+    protocol = read_text("core/protocol.md")
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
+    english = read_text("README.md")
+    chinese = read_text("README.zh.md")
+
+    for field in (
+        "userOutcome",
+        "engineeringSlice",
+        "initializationType",
+        "policyImpact",
+        "touchedPaths",
+        "deliveryBoundary",
+        "skipped",
+        "truthSource",
+        "verification",
+        "developmentFlow",
+    ):
+        assert f'"{field}"' in protocol
+    assert "structured JSON" in skill
+    assert "plain text" in skill.lower() and "draft" in skill.lower()
+    assert '"userOutcome"' in english
+    assert '"userOutcome"' in chinese
 
 
 def test_core_templates_exist():
@@ -2603,7 +2644,7 @@ def test_stop_hook_allows_no_active_goal():
     with tempfile.TemporaryDirectory() as tmp:
         project_root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Finish loop").returncode == 0
+        assert run_structured_start(tmp, "Finish loop").returncode == 0
         verify = [sys.executable, "-c", "raise SystemExit(0)"]
         assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
 
@@ -3658,6 +3699,114 @@ def test_start_command_creates_pending_active_goal_from_prompt():
     assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
 
 
+def test_start_command_accepts_complete_structured_contract():
+    contract = {
+        "userOutcome": "Structured goal",
+        "engineeringSlice": "Implement one parser branch",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py", "tests/test_goal_guard.py"],
+        "deliveryBoundary": "structured start only",
+        "skipped": "other commands",
+        "truthSource": "state and projection readback",
+        "verification": "python3 --version",
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+        audit = run_guard(["audit", "--root", tmp])
+        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        active_text = (root / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
+
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout)["activeGoal"] == "G1 - Structured goal"
+    goal = state["goalMatrix"]["childGoals"][0]
+    assert goal["contractComplete"] is True
+    assert goal["touchedPaths"] == "core/goal_guard.py, tests/test_goal_guard.py"
+    assert "Delivery boundary: structured start only" in active_text
+    assert audit.returncode == 0, audit.stderr
+
+
+def test_plain_start_creates_blocked_draft_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "Unclear draft")
+        audit = run_guard(["audit", "--root", tmp])
+        checkpoint = run_guard(
+            [
+                "checkpoint",
+                "--root",
+                tmp,
+                "--",
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('draft-ran').write_text('wrong')",
+            ]
+        )
+        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+
+        assert started.returncode == 0, started.stderr
+        assert state["goalMatrix"]["childGoals"][0]["contractComplete"] is False
+        assert audit.returncode == 1
+        assert "active goal contract is incomplete" in audit.stderr
+        assert checkpoint.returncode == 1
+        assert not (root / "draft-ran").exists()
+
+
+def test_structured_start_rejects_metadata_only_verification_before_state_write():
+    contract = {
+        "userOutcome": "Weak contract",
+        "engineeringSlice": "Record status",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py"],
+        "deliveryBoundary": "one parser branch",
+        "skipped": "none",
+        "truthSource": "status",
+        "verification": "python3 core/goal_guard.py status --root .",
+        "developmentFlow": "inspect -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+
+        assert started.returncode == 2
+        assert "metadata-only" in started.stderr
+        assert not (root / ".goal-matrix" / "state.json").exists()
+
+
+def test_structured_start_rejects_non_string_verification_without_traceback():
+    contract = {
+        "userOutcome": "Invalid contract",
+        "engineeringSlice": "Reject invalid input",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py"],
+        "deliveryBoundary": "input validation only",
+        "skipped": "none",
+        "truthSource": "CLI exit code",
+        "verification": ["python3", "--version"],
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+
+        assert started.returncode == 2
+        assert "missing verification" in started.stderr
+        assert "Traceback" not in started.stderr
+        assert not (root / ".goal-matrix" / "state.json").exists()
+
+
 def test_start_command_keeps_existing_active_goal():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
@@ -4015,7 +4164,7 @@ def test_state_json_remains_authoritative_across_checkpoint():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "JSON truth").returncode == 0
+        assert run_structured_start(tmp, "JSON truth").returncode == 0
         matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
         matrix_path.write_text(
             matrix_path.read_text(encoding="utf-8").replace("JSON truth", "Edited by hand"),
@@ -4075,7 +4224,7 @@ def test_checkpoint_preserves_extended_matrix_fields():
 def test_checkpoint_command_requires_passing_verification_before_advancing_goal():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
 
         failed = run_guard(["checkpoint", "--root", tmp, "--", sys.executable, "-c", "raise SystemExit(7)"])
         status_result = run_guard(["status", "--root", tmp])
@@ -4090,7 +4239,7 @@ def test_checkpoint_command_requires_passing_verification_before_advancing_goal(
 def test_checkpoint_command_rejects_metadata_only_status_verification():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
 
         rejected = run_guard(
             [
@@ -4118,7 +4267,7 @@ def test_checkpoint_command_rejects_metadata_only_status_verification():
 def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
         verify_command = [sys.executable, "-c", "print('verified proof')"]
 
         verified = run_guard(

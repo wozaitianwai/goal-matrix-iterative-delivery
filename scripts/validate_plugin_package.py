@@ -22,6 +22,7 @@ ASSETS = (
     "core/goal_policy.py",
     "core/goal_projection.py",
     "core/goal_publish.py",
+    "core/goal_state.py",
     "core/goal_verification.py",
     "core/protocol.md",
     "core/templates/active-goal.md",

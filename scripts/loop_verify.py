@@ -29,6 +29,7 @@ CHECKS = (
             "core/goal_policy.py",
             "core/goal_projection.py",
             "core/goal_publish.py",
+            "core/goal_state.py",
             "scripts/install_adapter.py",
             "scripts/validate_plugin_package.py",
             "scripts/loop_audit.py",

@@ -721,6 +721,7 @@ def test_package_validator_requires_runtime_closure():
         "core/goal_policy.py",
         "core/goal_projection.py",
         "core/goal_publish.py",
+        "core/goal_state.py",
         "core/goal_verification.py",
         "core/protocol.md",
         "core/templates/active-goal.md",
@@ -984,6 +985,10 @@ def test_loop_audit_reports_current_friction_budget():
         write_file(
             root / "core" / "goal_publish.py",
             (ROOT / "core" / "goal_publish.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_state.py",
+            (ROOT / "core" / "goal_state.py").read_text(encoding="utf-8"),
         )
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -4260,6 +4265,31 @@ def test_projection_helpers_are_in_subdomain_module():
         assert signature not in guard
     for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
         assert "core/goal_projection.py" in read_text(path)
+
+
+def test_state_helpers_are_in_subdomain_module():
+    state_path = ROOT / "core" / "goal_state.py"
+    spec = importlib.util.spec_from_file_location("goal_state", state_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(state_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    goals = [
+        {"id": "G1", "userOutcome": "Done", "status": "Done"},
+        {"id": "G2", "userOutcome": "Next", "status": "Pending"},
+    ]
+    assert callable(module.write_state_json)
+    assert module.next_goal_id(goals) == "G3"
+    assert module.pending_goal_after_active(goals, "G1 - Done")["id"] == "G2"
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def load_state_json(", "def next_action_payload(", "def write_state_json("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_state.py" in read_text(path)
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

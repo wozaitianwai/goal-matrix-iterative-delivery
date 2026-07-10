@@ -57,13 +57,28 @@ Use the shared guard to create the baseline files for a target project:
 ```bash
 printf '新项目立项...' | python3 core/goal_guard.py classify
 python3 core/goal_guard.py init --root /path/to/project --type iteration
-printf '修复下一个有边界的目标' | python3 core/goal_guard.py start --root /path/to/project
+python3 core/goal_guard.py start --root /path/to/project <<'JSON'
+{
+  "userOutcome": "修复下一个有边界的目标",
+  "engineeringSlice": "只修改一个可验证行为",
+  "initializationType": "iteration",
+  "policyImpact": "none",
+  "touchedPaths": ["src/", "tests/"],
+  "deliveryBoundary": "仅限当前行为",
+  "skipped": "无关工作",
+  "truthSource": "tests",
+  "verification": "python3 -m unittest",
+  "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint"
+}
+JSON
 python3 core/goal_guard.py checkpoint --root /path/to/project -- python3 scripts/loop_verify.py
 ```
 
 The command creates missing `.goal-matrix` files from `core/templates/`, creates `specs/` and `goals/`, writes the requested initialization type into a new policy file, and does not overwrite existing project files.
 
 After initialization, fill `.goal-matrix/project-context.md` with the project charter, work classification, and lifecycle support cycle. This is the project立项 record: idea source, user/operator, success criteria, support horizon, retirement trigger, work type, risk, primary surface, approval needs, and the stage-by-stage support loop.
+
+`start` accepts the structured JSON contract above. Plain text remains a compatibility path that creates an incomplete draft; audit and checkpoint block that draft until the JSON state is repaired.
 
 ## Active goal contract
 
@@ -89,6 +104,8 @@ Each small goal must carry its own flow:
 - verify: run the named check or read back the authoritative truth source.
 - checkpoint: update goal state, decisions, and skipped scope.
 
+L3 `remote-ci-activity` is established only inside a trusted GitHub Actions run whose `GITHUB_SHA` matches the checked-out HEAD. Recorded run-log readback is informational evidence and cannot promote a local audit to L3.
+
 ## Skill and plugin routing
 
 Supporting skills and plugins are selected by loop phase, not by habit or novelty:
@@ -112,7 +129,7 @@ Every engineering pass is a closed loop:
 project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
 ```
 
-Use small local checkpoint commits after verified child goals. Before pushing, squash or merge fragmented local commits into readable history unless the user asks to preserve every checkpoint. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push` so this policy can fail closed.
+Use small local checkpoint commits after verified child goals and preserve them as reviewable evidence. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push`; the gate requires a clean worktree, closed active goal, checkpoint evidence, an upstream or remote-default integration base, and no unintegrated remote commits, but does not impose a local commit-count limit.
 
 Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
 
@@ -120,15 +137,15 @@ Treat `.goal-matrix/project-policy.json` as the target project runtime policy so
 
 Payload approvals for approval-required paths must be scoped to the active goal, target path, future expiry, and a reason. Environment approval remains an explicit local emergency override only.
 
-After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for active goal and goal-matrix status. Markdown goal files remain a human-readable projection and fallback for legacy state.
+After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for the full active-goal contract, goal-matrix status, and `projection.keepDone` retention setting. Markdown goal files remain a human-readable projection and fallback only when state does not exist; every state write regenerates active, visible, and archive projections, and audit rejects drift in all three.
 
-`.goal-matrix/goals/archive.md` is an immutable read-only snapshot produced by prune; it is not part of drift detection and is not a trusted source of current goal state.
+`.goal-matrix/goals/archive.md` is a generated projection of older Done goals from `state.json`. It participates in drift detection and is never an independent truth source or hand-edit surface.
 
 Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
 
 Broad prompt handling: first generate a pending matrix with scope, truth source, verification, dependencies, risk, and parallel-safety metadata. Keep one scheduler/acceptance active goal in the main thread; optional subagents may only produce candidates or investigations. The main thread reviews outputs, runs the real verification, and checkpoints child goals one at a time.
 
-A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
+A self-evolution run exposes one active child goal at a time and continues only through pending goals already recorded in `state.json`. After checkpoint, promote the next existing pending goal; when none remains, report complete instead of synthesizing a backlog. Stop earlier only at budget or blocker.
 
 ## Hook phase gates
 
@@ -138,9 +155,9 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 | --- | --- |
 | `SessionStart` | Show project initialization status and loop policy. |
 | `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`; do not run `start` or write `.goal-matrix` state by default. UserPromptSubmit 不会运行 `start`。 |
-| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block `git push` when publish history is fragmented. |
+| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block publish actions when worktree, goal state, evidence, or upstream integration is not ready. |
 | `PostToolUse` | Tie tool output back to the active goal truth source or next step. |
-| `Stop` | Require verification, checkpoint/status evidence, and push history policy before completion. |
+| `Stop` | Require verification, checkpoint/status evidence, and publish readiness policy before completion. |
 
 Unclear drafts require a `Clarity decision:` note before execution. A loop may expose only one `Active goal:` at a time.
 

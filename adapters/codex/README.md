@@ -5,11 +5,12 @@ Codex is the only lifecycle adapter wired in this package.
 ## Install From GitHub
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.11-codex.2
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.12-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
 Use the pinned release tag for reproducible installs. Use the moving development branch only when testing unreleased changes.
+The marketplace commands above are the only supported global install path. `install_adapter.py` is project-only and never writes `$CODEX_HOME/skills`.
 
 Trust the plugin hooks in Codex Desktop, then restart Codex once.
 
@@ -27,7 +28,7 @@ To also enforce publish policy for shell or manual pushes:
 python3 scripts/install_adapter.py codex --target /path/to/project --install-git-hook
 ```
 
-If `.git/hooks/pre-push` already exists, the installer chains it from `.git/hooks/pre-push.goal-matrix.previous`. To restore the original hook, move that file back to `.git/hooks/pre-push`.
+If an unmanaged `pre-push` already exists, the installer chains it once from the sibling `pre-push.goal-matrix.previous`. A managed stale/broken wrapper is refreshed in place when the command is rerun. Use `goal_guard.py doctor --root .` to read `prePushHookState` and the effective path, including custom `core.hooksPath` repositories.
 
 ## Files
 
@@ -45,7 +46,7 @@ Checkpoint promotes the next goal in state; the runtime still has to continue ex
 
 The packaged `pi.extensions` entry loads `pi-extension/index.js`, which registers `/goal-notify`. It uses `ctx.ui.notify` for Codex popup notifications; it does not send chat messages for notification status.
 
-Project initialization creates notification settings and gitignores the local secret override file. Common webhook payload presets are available through `/goal-notify templates`; enable webhook delivery in project config and keep real URLs in the local override file or `GOAL_MATRIX_WEBHOOK_URL`.
+Project initialization creates notification settings and gitignores the local secret override file. Tracked config may define common webhook payload presets, but it cannot enable delivery or select the URL source. Opt in through `notifications.local.json` or `GOAL_MATRIX_WEBHOOK_URL`.
 
 ## Local Package Check
 

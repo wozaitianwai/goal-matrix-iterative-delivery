@@ -24,7 +24,7 @@ LEVEL_ORDER = {level: index for index, level in enumerate(("L0", *LEVELS))}
 
 RUN_LOG_LINE_LIMIT = 500
 STATUS_OUTPUT_CHAR_LIMIT = 40000
-HOOK_OUTPUT_CHAR_LIMIT = 12000
+HOOK_OUTPUT_CHAR_LIMIT = 6000
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
 MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")
@@ -295,8 +295,10 @@ def audit(root):
     ci_evidence = github_actions_evidence(root)
     signals["remoteCiContext"] = ci_evidence["present"]
     signals["remoteCiContextCurrentHead"] = ci_evidence["currentHead"]
+    signals["recordedRemoteReadback"] = remote_evidence["present"]
+    signals["recordedRemoteReadbackCurrentHead"] = remote_evidence["currentHead"]
     signals["remoteRunEvidence"] = remote_evidence["present"] or ci_evidence["present"]
-    signals["remoteRunEvidenceCurrentHead"] = remote_evidence["currentHead"] or ci_evidence["currentHead"]
+    signals["remoteRunEvidenceCurrentHead"] = ci_evidence["currentHead"]
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
     run_log_lines = run_log_line_count(root)
     signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
@@ -335,17 +337,20 @@ def audit(root):
     score += 6 if signals["githubRemote"] else 0
     score += 6 if signals["githubWorkflows"] else 0
 
-    if (
-        score >= 78
-        and signals["verifier"]
+    l1_ready = all(signals[name] for name in REQUIRED) and signals["triage"]
+    l2_ready = l1_ready and signals["completionMatrix"] and signals["verifier"]
+    l3_ready = (
+        l2_ready
         and signals["githubRemote"]
         and signals["githubWorkflows"]
-        and signals["remoteRunEvidenceCurrentHead"]
-    ):
+        and signals["remoteCiContextCurrentHead"]
+    )
+
+    if l3_ready:
         level = "L3"
-    elif score >= 58 and signals["verifier"]:
+    elif l2_ready:
         level = "L2"
-    elif score >= 38 and signals["stateFile"]:
+    elif l1_ready:
         level = "L1"
     else:
         level = "L0"
@@ -361,10 +366,12 @@ def audit(root):
     if not signals["githubWorkflows"]:
         recommendations.append("Add CI/audit workflow after GitHub remote exists.")
         blocked.append("GitHub workflow evidence is missing; L3 cannot be claimed.")
-    if signals["githubRemote"] and signals["githubWorkflows"] and not signals["remoteRunEvidence"]:
-        blocked.append("Remote workflow run evidence is missing; L3 cannot be claimed.")
-    if signals["remoteRunEvidence"] and not signals["remoteRunEvidenceCurrentHead"]:
-        blocked.append("Remote workflow run evidence is stale for current HEAD; append current-head readback after CI passes.")
+    if signals["githubRemote"] and signals["githubWorkflows"] and not signals["remoteCiContext"]:
+        blocked.append(
+            "Trusted GitHub Actions run context is missing; recorded readback is informational only."
+        )
+    if signals["remoteCiContext"] and not signals["remoteCiContextCurrentHead"]:
+        blocked.append("GitHub Actions run context does not match current HEAD; L3 cannot be claimed.")
     if not all(signals[name] for name in REQUIRED):
         recommendations.append("Restore missing L1 spine files.")
     if signals["runLogNeedsSummary"]:
@@ -394,10 +401,10 @@ def audit(root):
 
     if not signals["githubRemote"]:
         next_action = "Add GitHub remote, push, and read back the workflow result."
-    elif not signals["remoteRunEvidence"]:
-        next_action = "Append remote-ci-readback evidence after the workflow passes."
-    elif not signals["remoteRunEvidenceCurrentHead"]:
-        next_action = "Append current-head remote-ci-readback evidence after the workflow passes."
+    elif not signals["githubWorkflows"]:
+        next_action = "Add a GitHub Actions verifier workflow."
+    elif not signals["remoteCiContextCurrentHead"]:
+        next_action = "Run the current HEAD verifier in GitHub Actions."
     elif not gaps:
         next_action = "No unresolved loop-engineering gaps."
     else:
@@ -406,6 +413,7 @@ def audit(root):
     return {
         "target": str(root),
         "score": min(score, 100),
+        "scoreRole": "informational-only",
         "level": level,
         "levels": LEVELS,
         "runLogLineCount": run_log_lines,
@@ -418,6 +426,7 @@ def audit(root):
         "governanceApprovalEnv": policy_approval_env,
         "frictionBudget": friction,
         "remoteRunEvidence": remote_evidence,
+        "recordedRemoteReadback": remote_evidence,
         "remoteCiContext": ci_evidence,
         "assessment": assessment,
         "signals": signals,
@@ -447,7 +456,7 @@ def main():
     if args.require_level and LEVEL_ORDER[result["level"]] < LEVEL_ORDER[args.require_level]:
         print(f"required readiness {args.require_level}, got {result['level']}", file=sys.stderr)
         return 3
-    return 0 if result["score"] >= 38 else 2
+    return 0 if LEVEL_ORDER[result["level"]] >= LEVEL_ORDER["L1"] else 2
 
 
 if __name__ == "__main__":

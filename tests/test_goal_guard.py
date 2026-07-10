@@ -21,7 +21,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.11-codex.2"
+RELEASE_INSTALL_TAG = "v0.1.12-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -47,6 +47,22 @@ def run_guard(args, text="", cwd=ROOT, env=None):
         cwd=cwd,
         env=env,
     )
+
+
+def run_structured_start(root, title, verification="python3 --version"):
+    contract = {
+        "userOutcome": title,
+        "engineeringSlice": f"Implement {title}",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["tests/test_goal_guard.py"],
+        "deliveryBoundary": f"{title} only",
+        "skipped": "unrelated work",
+        "truthSource": "test readback",
+        "verification": verification,
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    return run_guard(["start", "--root", str(root)], json.dumps(contract))
 
 
 def hook_context(payload):
@@ -103,13 +119,39 @@ def test_core_protocol_defines_loop_engineering_contract():
         "Loop engineering",
         "project initialization status -> active goal -> failing check",
         "self-evolution run",
-        "budget, blocker, or no pending goal",
+        "pending goals already recorded",
+        "report complete instead of synthesizing a backlog",
         "checkpoint commit",
         "design_gate",
         "review_gate",
         "Next loop",
     ):
         assert phrase in text
+
+
+def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
+    protocol = read_text("core/protocol.md")
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
+    english = read_text("README.md")
+    chinese = read_text("README.zh.md")
+
+    for field in (
+        "userOutcome",
+        "engineeringSlice",
+        "initializationType",
+        "policyImpact",
+        "touchedPaths",
+        "deliveryBoundary",
+        "skipped",
+        "truthSource",
+        "verification",
+        "developmentFlow",
+    ):
+        assert f'"{field}"' in protocol
+    assert "structured JSON" in skill
+    assert "plain text" in skill.lower() and "draft" in skill.lower()
+    assert '"userOutcome"' in english
+    assert '"userOutcome"' in chinese
 
 
 def test_core_templates_exist():
@@ -343,7 +385,8 @@ def test_instruction_adapters_include_full_loop_boundaries():
             "review_gate",
             "Next loop",
             "self-evolution run",
-            "budget, blocker, or no pending goal",
+            "pending goals already recorded",
+            "report complete instead of synthesizing a backlog",
             "visible Codex goal",
         ):
             assert phrase in text, f"{path} missing {phrase}"
@@ -395,6 +438,9 @@ def test_native_pre_push_boundary_is_documented():
         assert phrase in readme
     assert "shell or manual pushes" in adapter
     assert "prePushHookInstalled" in operations
+    assert "prePushHookState" in operations
+    for state in ("absent", "unmanaged", "current", "stale", "broken"):
+        assert state in operations
     assert "python3 scripts/install_adapter.py codex --target . --install-git-hook" in operations
 
 
@@ -436,7 +482,7 @@ def test_install_adapter_rejects_non_hook_instruction_adapters():
     assert "invalid choice" in result.stderr
 
 
-def test_install_adapter_global_codex_syncs_installed_skill():
+def test_install_adapter_rejects_legacy_global_scope_without_writing_skills():
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "CODEX_HOME": tmp}
         result = subprocess.run(
@@ -452,14 +498,14 @@ def test_install_adapter_global_codex_syncs_installed_skill():
             cwd=ROOT,
             env=env,
         )
-        installed = Path(tmp) / "skills" / "goal-matrix-iterative-delivery" / "SKILL.md"
-        verifier = Path(tmp) / "skills" / "loop-verifier" / "SKILL.md"
-        installed_text = installed.read_text(encoding="utf-8") if installed.is_file() else ""
-        verifier_text = verifier.read_text(encoding="utf-8") if verifier.is_file() else ""
+        skills = Path(tmp) / "skills"
 
-    assert result.returncode in {0, 2}, result.stderr
-    assert installed_text == read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
-    assert verifier_text == read_text("adapters/codex/skills/loop-verifier/SKILL.md")
+    assert result.returncode != 0
+    assert "--scope" in result.stderr
+    assert not skills.exists()
+    adapter_readme = read_text("adapters/codex/README.md")
+    assert "project-only" in adapter_readme
+    assert "only supported global install path" in adapter_readme
 
 
 def test_install_adapter_can_install_native_pre_push_hook():
@@ -484,14 +530,16 @@ def test_install_adapter_can_install_native_pre_push_hook():
         hook_is_executable = os.access(hook, os.X_OK)
         git_commit(target, "one.txt", "one\n", "one")
         git_commit(target, "two.txt", "two\n", "two")
+        write_file(target / "dirty.txt", "dirty\n")
         hook_result = subprocess.run([str(hook)], cwd=target, text=True, capture_output=True)
 
     assert result.returncode == 0, result.stderr
     assert hook_exists
     assert hook_is_executable
-    assert "goal_guard.py\" publish-gate --root \"$repo_root\"" in hook_text
+    assert "goal-matrix-managed-pre-push:v1" in hook_text
+    assert 'python3 "$goal_guard" publish-gate --root "$repo_root"' in hook_text
     assert hook_result.returncode == 1
-    assert "fragmented history" in hook_result.stderr
+    assert "uncommitted changes" in hook_result.stderr
 
 
 def test_install_adapter_chains_existing_native_pre_push_hook():
@@ -530,9 +578,84 @@ def test_install_adapter_chains_existing_native_pre_push_hook():
     assert result.returncode == 0, result.stderr
     assert previous_exists
     assert previous_text == "#!/bin/sh\nprintf chained > chained-hook.txt\n"
-    assert "pre-push.goal-matrix.previous" in hook_text
+    assert '${0}.goal-matrix.previous' in hook_text
     assert hook_result.returncode == 0, hook_result.stderr
     assert chained_text == "chained"
+
+
+def test_install_adapter_refreshes_legacy_stale_hook_without_rechaining():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = make_publish_repo(Path(tmp))
+        hook = target / ".git" / "hooks" / "pre-push"
+        previous = target / ".git" / "hooks" / "pre-push.goal-matrix.previous"
+        stale_guard = Path(tmp) / "old-plugin" / "core" / "goal_guard.py"
+        write_file(
+            hook,
+            f'''#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+python3 "{stale_guard}" publish-gate --root "$repo_root"
+previous_hook="$repo_root/.git/hooks/pre-push.goal-matrix.previous"
+''',
+        )
+        hook.chmod(0o755)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(target),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        refreshed = hook.read_text(encoding="utf-8")
+        previous_exists = previous.exists()
+
+    assert result.returncode == 0, result.stderr
+    assert "goal-matrix-managed-pre-push:v1" in refreshed
+    assert str(ROOT / "core" / "goal_guard.py") in refreshed
+    assert str(stale_guard) not in refreshed
+    assert previous_exists is False
+
+
+def test_install_adapter_and_doctor_respect_custom_hooks_path():
+    with tempfile.TemporaryDirectory() as tmp:
+        target = make_publish_repo(Path(tmp))
+        subprocess.run(
+            ["git", "config", "core.hooksPath", ".githooks"],
+            cwd=target,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(target),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        doctor = run_guard(["doctor", "--root", str(target)])
+        hook = target / ".githooks" / "pre-push"
+        hook_exists = hook.is_file()
+        hook_path = str(hook.resolve())
+
+    assert result.returncode == 0, result.stderr
+    assert hook_exists
+    native_hooks = json.loads(doctor.stdout)["nativeHooks"]
+    assert native_hooks["prePushHookPath"] == hook_path
+    assert native_hooks["prePushHookState"] == "current"
 
 
 def test_readmes_document_native_pre_push_hook_restore_path():
@@ -594,6 +717,12 @@ def test_package_validator_checks_current_repo():
 def test_package_validator_requires_runtime_closure():
     required_runtime = (
         "core/goal_guard.py",
+        "core/goal_gate.py",
+        "core/goal_native_hook.py",
+        "core/goal_policy.py",
+        "core/goal_projection.py",
+        "core/goal_publish.py",
+        "core/goal_state.py",
         "core/goal_verification.py",
         "core/protocol.md",
         "core/templates/active-goal.md",
@@ -701,12 +830,12 @@ def test_loop_engineering_completion_matrix_is_audited():
     assert audit["levels"]["L1"] == "report-only"
     assert audit["levels"]["L2"] == "assisted-with-verifier"
     assert audit["levels"]["L3"] == "remote-ci-activity"
-    if audit["signals"]["remoteRunEvidenceCurrentHead"]:
+    if audit["signals"]["remoteCiContextCurrentHead"]:
         assert audit["blocked"] == []
-    elif audit["signals"]["remoteRunEvidence"]:
+    elif audit["signals"]["remoteCiContext"]:
         assert any("current HEAD" in item for item in audit["blocked"])
-    elif audit["signals"]["githubRemote"]:
-        assert any("Remote workflow run evidence" in item for item in audit["blocked"])
+    elif audit["signals"]["githubRemote"] and audit["signals"]["githubWorkflows"]:
+        assert any("informational only" in item for item in audit["blocked"])
     else:
         assert any("GitHub remote" in item for item in audit["blocked"])
 
@@ -731,23 +860,24 @@ def test_loop_verifier_skill_is_packaged_and_audited():
     assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidenceCurrentHead"] else "L2")
 
 
-def test_loop_engineering_gap_register_tracks_unfinished_work():
+def test_loop_docs_describe_current_operational_boundaries():
     loop = read_text("LOOP.md")
     state = read_text("STATE.md")
 
     for phrase in (
-        "Engineering Gap Register",
-        "Resolved: keep run URL/status",
-        "maker-checker",
-        "run-evidence",
-        "Resolved: keep clone/install/doctor evidence",
-        "connectors",
-        "governance",
-        "Resolved: keep policy, tests, and verifier output together",
+        "run-log readback is informational only",
+        "trusted GitHub Actions context matching the checked-out HEAD",
+        "pull request and required-check ruleset",
+        "machine goal status is read from `.goal-matrix/state.json`",
     ):
         assert phrase in loop
-    assert "engineering gap register" in state
+    assert "G23-G36" not in loop
+    assert "Engineering Gap Register" not in loop
+    assert "Resolved:" not in loop
+    assert "marketplace is the only global plugin installation path" in state
+    assert "current-head PR and CI evidence" in state
     assert "machine goal status stays in `.goal-matrix/state.json`" in state
+    assert "Hook/runtime simplification remains outside" not in state
 
 
 def test_ci_workflow_runs_loop_engineering_gates():
@@ -800,7 +930,7 @@ def test_loop_audit_reports_unresolved_gap_register_items():
     if audit["signals"]["remoteRunEvidenceCurrentHead"]:
         assert audit["nextAction"] == "No unresolved loop-engineering gaps."
     else:
-        assert audit["nextAction"] == "Append current-head remote-ci-readback evidence after the workflow passes."
+        assert audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
 
 def test_loop_audit_flags_oversized_run_log_for_summary_goal():
@@ -838,8 +968,32 @@ def test_loop_audit_reports_current_friction_budget():
         (root / "core").mkdir()
         write_file(root / "core" / "goal_guard.py", GUARD.read_text(encoding="utf-8"))
         write_file(
+            root / "core" / "goal_gate.py",
+            (ROOT / "core" / "goal_gate.py").read_text(encoding="utf-8"),
+        )
+        write_file(
             root / "core" / "goal_verification.py",
             (ROOT / "core" / "goal_verification.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_native_hook.py",
+            (ROOT / "core" / "goal_native_hook.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_policy.py",
+            (ROOT / "core" / "goal_policy.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_projection.py",
+            (ROOT / "core" / "goal_projection.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_publish.py",
+            (ROOT / "core" / "goal_publish.py").read_text(encoding="utf-8"),
+        )
+        write_file(
+            root / "core" / "goal_state.py",
+            (ROOT / "core" / "goal_state.py").read_text(encoding="utf-8"),
         )
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
@@ -855,6 +1009,7 @@ def test_loop_audit_reports_current_friction_budget():
     budget = audit["frictionBudget"]
     assert budget["statusOutputChars"] > 0
     assert budget["hookOutputChars"] > 0
+    assert budget["hookOutputCharLimit"] == 6000
     assert budget["statusOutputChars"] <= budget["statusOutputCharLimit"]
     assert budget["hookOutputChars"] <= budget["hookOutputCharLimit"]
     assert audit["signals"]["frictionBudgetExceeded"] is False
@@ -1528,7 +1683,7 @@ remote-ci-activity
         )
         write_file(
             root / "loop-run-log.md",
-            "# Runs\n\n## Recent Runs\nremote-ci-readback github-check-run\n",
+            "# Runs\n\n## Recent Runs\noutcome remote-ci-readback github-check-run\n",
         )
         prose = subprocess.run(
             [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
@@ -1582,11 +1737,12 @@ remote-ci-activity
     assert present.returncode == 0, present.stderr
     present_audit = json.loads(present.stdout)
     assert present_audit["signals"]["remoteRunEvidence"] is True
-    assert present_audit["signals"]["remoteRunEvidenceCurrentHead"] is True
-    assert present_audit["level"] == "L3"
+    assert present_audit["signals"]["recordedRemoteReadbackCurrentHead"] is True
+    assert present_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
+    assert present_audit["level"] == "L2"
 
 
-def test_loop_audit_remote_evidence_freshness_boundary():
+def test_loop_audit_recorded_readback_never_promotes_l3():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
@@ -1671,14 +1827,16 @@ remote-ci-activity
     assert stale_audit["signals"]["remoteRunEvidence"] is True
     assert stale_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
     assert stale_audit["level"] == "L2"
-    assert any("current HEAD" in item for item in stale_audit["blocked"])
-    assert stale_audit["nextAction"] == "Append current-head remote-ci-readback evidence after the workflow passes."
+    assert any("informational only" in item for item in stale_audit["blocked"])
+    assert stale_audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
     assert fresh.returncode == 0, fresh.stderr
     fresh_audit = json.loads(fresh.stdout)
     assert fresh_audit["signals"]["remoteRunEvidence"] is True
-    assert fresh_audit["signals"]["remoteRunEvidenceCurrentHead"] is True
-    assert fresh_audit["level"] == "L3"
+    assert fresh_audit["signals"]["recordedRemoteReadbackCurrentHead"] is True
+    assert fresh_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
+    assert fresh_audit["level"] == "L2"
+    assert fresh_audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
 
 def make_l3_context_repo(root):
@@ -1736,6 +1894,49 @@ remote-ci-activity
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def test_loop_audit_levels_require_documented_signals_not_score():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_l3_context_repo(root)
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+        loop_path = root / "LOOP.md"
+        complete_loop = loop_path.read_text(encoding="utf-8")
+
+        loop_path.write_text(
+            complete_loop.replace("## Loop Engineering Completion Matrix\n", ""),
+            encoding="utf-8",
+        )
+        without_matrix = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+        loop_path.write_text(
+            complete_loop.replace("package-triage", "manual-review"),
+            encoding="utf-8",
+        )
+        without_triage = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+    matrix_audit = json.loads(without_matrix.stdout)
+    assert matrix_audit["score"] >= 58
+    assert matrix_audit["signals"]["completionMatrix"] is False
+    assert matrix_audit["level"] == "L1"
+
+    triage_audit = json.loads(without_triage.stdout)
+    assert triage_audit["score"] >= 58
+    assert triage_audit["signals"]["triage"] is False
+    assert triage_audit["level"] == "L0"
 
 
 def test_loop_audit_l3_required_rejects_stale_evidence():
@@ -1896,23 +2097,30 @@ def test_loop_verify_script_and_ci_share_one_gate():
     assert "GOAL_MATRIX_APPROVED" not in workflow_text
     assert "fetch-depth: 0" in workflow_text
     assert "fetch-tags: true" in workflow_text
-    assert "python3 scripts/loop_verify.py" in workflow_text
+    assert workflow_text.count("python3 scripts/loop_verify.py --require-level L3") == 1
 
 
-def test_ci_workflow_lists_native_test_surfaces_explicitly():
-    text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+def test_ci_workflow_delegates_native_surfaces_to_shared_verifier():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+    verify_text = (ROOT / "scripts" / "loop_verify.py").read_text(encoding="utf-8")
     for phrase in (
         "python3 scripts/lint_python.py",
         "python3 tests/test_goal_guard.py",
         "python3 scripts/validate_plugin_package.py --root .",
         "node --test pi-extension/test/extension.test.js",
-        "python3 scripts/install_adapter.py codex --target",
-        "hook UserPromptSubmit",
-        "hook PreToolUse",
-        "hook Stop",
-        "python3 scripts/loop_verify.py",
     ):
-        assert phrase in text
+        assert phrase not in workflow_text
+    for phrase in ("scripts/lint_python.py", "tests/test_goal_guard.py", "scripts/validate_plugin_package.py"):
+        assert phrase in verify_text
+
+
+def test_ci_workflow_uses_current_official_actions():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+
+    assert "actions/checkout@v6" in workflow_text
+    assert "actions/setup-python@v6" in workflow_text
+    assert "actions/setup-node@v6" in workflow_text
+    assert 'node-version: "24"' in workflow_text
 
 
 def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
@@ -1924,9 +2132,8 @@ def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
     assert "pull_request:" in workflow_text
     assert "strategy:" in workflow_text
     assert "matrix:" in workflow_text
-    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow_text
+    assert 'python-version: ["3.10", "3.12", "3.14"]' in workflow_text
     assert "python-version: ${{ matrix.python-version }}" in workflow_text
-    assert "python3 scripts/lint_python.py" in workflow_text
     assert "scripts/lint_python.py" in verify_text
 
 
@@ -1945,10 +2152,12 @@ def test_governance_workflow_passes_event_diff_range():
     assert "github.event.pull_request.head.sha || github.sha" in workflow_text
 
 
-def test_ci_workflow_has_loop_cadence_trigger():
+def test_ci_workflow_runs_on_push_and_pull_request_only():
     text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
-    assert "schedule:" in text
-    assert "cron:" in text
+    assert "push:" in text
+    assert "pull_request:" in text
+    assert "schedule:" not in text
+    assert "cron:" not in text
 
 
 def test_repository_content_has_no_private_project_context():
@@ -2141,7 +2350,8 @@ def test_user_prompt_submit_injects_loop_engineering_commit_policy():
     context = hook_context(json.loads(result.stdout))
     assert "Loop engineering" in context
     assert "checkpoint commit" in context
-    assert "squash or merge" in context
+    assert "preserve verified checkpoint commits" in context
+    assert "clean, integrated branch" in context
     assert "push" in context
 
 
@@ -2278,6 +2488,7 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
         publish_root = make_publish_repo(Path(tmp) / "publish")
         git_commit(publish_root, "one.txt", "one\n", "one")
         git_commit(publish_root, "two.txt", "two\n", "two")
+        write_file(publish_root / "dirty.txt", "dirty\n")
         publish = run_guard(
             ["publish-gate", "--root", str(publish_root), "--hook"],
             read_hook_fixture("pre-tool-git-push.json"),
@@ -2300,7 +2511,7 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
     assert unknown.returncode == 0, unknown.stderr
     assert json.loads(unknown.stdout) == {"paths": [], "commands": []}
     assert publish.returncode == 1
-    assert "fragmented history" in publish.stderr
+    assert "uncommitted changes" in publish.stderr
 
 
 def test_policy_gate_debug_reports_paths_and_commands():
@@ -2323,6 +2534,27 @@ def test_policy_gate_debug_reports_paths_and_commands():
     assert "protected command" in result.stderr
 
 
+def test_policy_gate_fails_closed_for_invalid_existing_policy():
+    cases = (
+        ("{broken", "invalid project policy JSON"),
+        ("[]", "top-level value must be an object"),
+        ('{"version": 2}', "expected 1"),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        policy_path = root / ".goal-matrix" / "project-policy.json"
+        policy_path.parent.mkdir(parents=True)
+
+        missing = run_guard(["policy-gate", "--root", tmp, "--hook"], "{}")
+        assert missing.returncode == 0, missing.stderr
+
+        for contents, diagnostic in cases:
+            write_file(policy_path, contents)
+            result = run_guard(["policy-gate", "--root", tmp, "--hook"], "{}")
+            assert result.returncode == 1
+            assert diagnostic in result.stderr
+
+
 def test_user_prompt_submit_triggers_for_self_evolution_runs():
     prompt = json.dumps({"prompt": "开始自我进化，连续迭代到预算、阻塞或没有 pending goal"})
     result = run_guard(["hook", "UserPromptSubmit"], prompt)
@@ -2330,7 +2562,8 @@ def test_user_prompt_submit_triggers_for_self_evolution_runs():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "self-evolution run" in context
-    assert "budget, blocker, or no pending goal" in context
+    assert "pending goals already recorded" in context
+    assert "never synthesize work" in context
 
 
 def test_codex_hook_config_wires_loop_events():
@@ -2355,9 +2588,9 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
     assert " hook PreToolUse" in pre_tool_command
-    assert " checkpoint --if-active --root . --" not in stop_command
-    assert " gate --phase review_gate --root . --verify" in stop_command
-    assert " active-verify --root ." in stop_command
+    assert " completion-gate --root ." in stop_command
+    assert " --verify" not in stop_command
+    assert " active-verify" not in stop_command
     assert "scripts/loop_verify.py" not in stop_command
     assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
     assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
@@ -2434,7 +2667,74 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     assert second_text == "two"
 
 
-def test_stop_hook_preserves_review_gate_failure():
+def test_active_verify_uses_state_json_instead_of_edited_markdown():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "Verify JSON contract").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_goal = state["goalMatrix"]["childGoals"][0]
+        state_goal["verification"] = shlex.join(
+            [sys.executable, "-c", "from pathlib import Path; Path('state-source').write_text('ok')"]
+        )
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Verify JSON contract
+Initialization type: iteration
+Policy impact: none
+Touched paths: markdown-source
+Delivery boundary: edited boundary
+Skipped: none
+Truth source: markdown-source
+Verification: {sys.executable} -c "from pathlib import Path; Path('markdown-source').write_text('wrong')"
+Development flow: inspect -> verify
+""",
+        )
+
+        result = run_guard(["active-verify", "--root", tmp])
+
+        assert result.returncode == 0, result.stderr
+        assert (root / "state-source").read_text(encoding="utf-8") == "ok"
+        assert not (root / "markdown-source").exists()
+
+
+def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "JSON boundary").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_goal = state["goalMatrix"]["childGoals"][0]
+        state_goal.update(
+            {
+                "deliveryBoundary": "state boundary",
+                "truthSource": "state truth",
+                "verification": "python3 --version",
+            }
+        )
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        write_file(active_path, active_path.read_text(encoding="utf-8").replace(
+            "Delivery boundary: one bounded child goal from the current prompt",
+            "Delivery boundary: edited by hand",
+        ))
+
+        audit = run_guard(["audit", "--root", tmp])
+        status = run_guard(["status", "--root", tmp])
+
+        assert audit.returncode == 1
+        assert "active goal projection drift" in audit.stderr
+        payload = json.loads(status.stdout)
+        assert payload["nextAction"]["deliveryBoundary"] == "state boundary"
+        assert payload["nextAction"]["truthSource"] == "state truth"
+
+
+def test_stop_hook_preserves_completion_gate_failure():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -2447,7 +2747,7 @@ def test_stop_hook_preserves_review_gate_failure():
         write_file(
             plugin_root / "core" / "goal_guard.py",
             "import pathlib, sys\n"
-            "if 'gate' in sys.argv:\n"
+            "if 'completion-gate' in sys.argv:\n"
             "    raise SystemExit(7)\n"
             "if sys.argv[-2:] == ['hook', 'Stop']:\n"
             f"    pathlib.Path({str(marker)!r}).write_text('called')\n",
@@ -2468,6 +2768,46 @@ def test_stop_hook_preserves_review_gate_failure():
         assert not marker.exists()
 
 
+def test_stop_hook_never_executes_active_goal_verification():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        marker = root / "stop-side-effect"
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "Unsafe verification").returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Unsafe verification
+Initialization type: iteration
+Policy impact: none
+Touched paths: stop-side-effect
+Delivery boundary: Stop must not execute this command
+Skipped: none
+Truth source: stop-side-effect
+Verification: {sys.executable} -c "from pathlib import Path; Path('stop-side-effect').write_text('executed')"
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        write_file(root / ".goal-matrix" / "loop-note.md", "Reviewer: approved\n")
+
+        result = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="",
+            text=True,
+            capture_output=True,
+            cwd=root,
+            env={**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)},
+        )
+
+        assert not marker.exists()
+        assert result.returncode != 0
+        assert "checkpoint" in result.stderr.lower()
+
+
 def test_stop_hook_allows_no_active_goal():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
@@ -2475,10 +2815,9 @@ def test_stop_hook_allows_no_active_goal():
     with tempfile.TemporaryDirectory() as tmp:
         project_root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        write_file(
-            project_root / ".goal-matrix" / "goals" / "active-goal.md",
-            "Active goal: none\n",
-        )
+        assert run_structured_start(tmp, "Finish loop").returncode == 0
+        verify = [sys.executable, "-c", "raise SystemExit(0)"]
+        assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
 
         env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(
@@ -2912,20 +3251,20 @@ def test_audit_accepts_valid_initialized_goal():
     assert result.returncode == 0, result.stderr
 
 
-def test_audit_rejects_push_claim_without_history_consolidation():
-    draft = VALID_INITIALIZED_GOAL + "\nPushed branch to origin.\n"
+def test_audit_rejects_push_claim_without_final_verification():
+    unverified = VALID_INITIALIZED_GOAL.replace(
+        "Completed G1: parser works. Verified with `python3 tests/test_goal_guard.py`. Checkpoint updated.",
+        "Completed G1: parser works. Checkpoint updated.",
+    )
+    draft = unverified + "\nPushed branch to origin.\n"
     result = run_guard(["audit"], draft)
 
     assert result.returncode == 1
-    assert "history consolidation" in result.stderr
+    assert "final verification" in result.stderr
 
 
-def test_audit_accepts_push_claim_with_history_consolidation():
-    draft = (
-        VALID_INITIALIZED_GOAL
-        + "\nHistory consolidated: squash or merge before push.\n"
-        + "Pushed branch to origin after final verification.\n"
-    )
+def test_audit_accepts_push_claim_after_final_verification():
+    draft = VALID_INITIALIZED_GOAL + "\nPushed branch to origin after final verification.\n"
     result = run_guard(["audit"], draft)
 
     assert result.returncode == 0, result.stderr
@@ -3192,7 +3531,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     )
 
 
-def test_publish_gate_rejects_fragmented_history_before_push():
+def test_publish_gate_accepts_multiple_checkpoint_commits():
     with tempfile.TemporaryDirectory() as tmp:
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
@@ -3200,83 +3539,60 @@ def test_publish_gate_rejects_fragmented_history_before_push():
 
         result = run_guard(["publish-gate", "--root", str(repo)])
 
-    assert result.returncode == 1
-    assert "fragmented history" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_only_skips_fragmented_history():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        git_commit(repo, "one.txt", "one\n", "one")
-        git_commit(repo, "two.txt", "two\n", "two")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
     assert result.returncode == 0, result.stderr
 
 
-def test_publish_gate_allow_fragmented_push_still_rejects_dirty_worktree():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        git_commit(repo, "one.txt", "one\n", "one")
-        write_file(repo / "dirty.txt", "dirty\n")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "uncommitted changes" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_active_goal():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        commit_goal_matrix(repo, active_goal="G2 - Still running")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "active goal" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_missing_checkpoint_evidence():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        commit_goal_matrix(repo, evidence=False)
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "missing checkpoint evidence" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_missing_upstream():
+def test_publish_gate_rejects_missing_upstream():
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "repo"
         subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
         git_commit(repo, "README.md", "base\n", "base")
 
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
+        result = run_guard(["publish-gate", "--root", str(repo)])
 
     assert result.returncode == 1
     assert "missing upstream" in result.stderr
 
 
-def test_publish_gate_allow_fragmented_push_still_rejects_behind_upstream():
+def test_publish_gate_accepts_first_feature_branch_push_against_remote_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        subprocess.run(["git", "remote", "set-head", "origin", "--auto"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-c", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+        git_commit(repo, "feature.txt", "feature\n", "feature")
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_publish_gate_rejects_first_feature_branch_push_behind_remote_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        repo = make_publish_repo(root)
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(["git", "remote", "set-head", "origin", "--auto"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-c", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+        other = root / "other"
+        subprocess.run(
+            ["git", "clone", "--branch", branch, str(root / "remote.git"), str(other)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        git_commit(other, "remote.txt", "remote\n", "remote")
+        subprocess.run(["git", "push", "origin", branch], cwd=other, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, check=True, capture_output=True, text=True)
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 1
+    assert "remote history not integrated" in result.stderr
+
+
+def test_publish_gate_rejects_behind_upstream():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         repo = make_publish_repo(root)
@@ -3294,10 +3610,7 @@ def test_publish_gate_allow_fragmented_push_still_rejects_behind_upstream():
         subprocess.run(["git", "push", "origin", branch], cwd=other, check=True, capture_output=True, text=True)
         subprocess.run(["git", "fetch", "origin"], cwd=repo, check=True, capture_output=True, text=True)
 
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
+        result = run_guard(["publish-gate", "--root", str(repo)])
 
     assert result.returncode == 1
     assert "remote history not integrated" in result.stderr
@@ -3364,7 +3677,7 @@ def test_publish_gate_hook_ignores_non_push_tools():
     assert result.returncode == 0, result.stderr
 
 
-def test_publish_gate_hook_rejects_push_with_fragmented_history():
+def test_publish_gate_hook_accepts_push_with_multiple_commits():
     with tempfile.TemporaryDirectory() as tmp:
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
@@ -3373,8 +3686,7 @@ def test_publish_gate_hook_rejects_push_with_fragmented_history():
 
         result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
-    assert result.returncode == 1
-    assert "fragmented history" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 def test_publish_gate_hook_rejects_push_with_git_global_options():
@@ -3382,12 +3694,13 @@ def test_publish_gate_hook_rejects_push_with_git_global_options():
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
         git_commit(repo, "two.txt", "two\n", "two")
+        write_file(repo / "dirty.txt", "dirty\n")
         payload = json.dumps({"tool_input": {"cmd": "git -C . push origin HEAD"}})
 
         result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
     assert result.returncode == 1
-    assert "fragmented history" in result.stderr
+    assert "uncommitted changes" in result.stderr
 
 
 def test_publish_gate_hook_rejects_publish_action_patterns():
@@ -3396,7 +3709,7 @@ def test_publish_gate_hook_rejects_publish_action_patterns():
             repo = make_publish_repo(Path(tmp))
             write_file(
                 repo / ".goal-matrix" / "project-policy.json",
-                json.dumps({"publishActionPatterns": ["npm publish", "gh release"]}, indent=2) + "\n",
+                json.dumps({"version": 1, "publishActionPatterns": ["npm publish", "gh release"]}, indent=2) + "\n",
             )
             subprocess.run(["git", "add", ".goal-matrix"], cwd=repo, check=True, capture_output=True, text=True)
             subprocess.run(
@@ -3408,12 +3721,13 @@ def test_publish_gate_hook_rejects_publish_action_patterns():
             )
             git_commit(repo, "one.txt", "one\n", "one")
             git_commit(repo, "two.txt", "two\n", "two")
+            write_file(repo / "dirty.txt", "dirty\n")
             payload = json.dumps({"tool_input": {"cmd": command}})
 
             result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
         assert result.returncode == 1, command
-        assert "fragmented history" in result.stderr
+        assert "uncommitted changes" in result.stderr
 
 
 def test_status_command_reports_active_and_next_loop():
@@ -3531,6 +3845,114 @@ def test_start_command_creates_pending_active_goal_from_prompt():
     assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
 
 
+def test_start_command_accepts_complete_structured_contract():
+    contract = {
+        "userOutcome": "Structured goal",
+        "engineeringSlice": "Implement one parser branch",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py", "tests/test_goal_guard.py"],
+        "deliveryBoundary": "structured start only",
+        "skipped": "other commands",
+        "truthSource": "state and projection readback",
+        "verification": "python3 --version",
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+        audit = run_guard(["audit", "--root", tmp])
+        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        active_text = (root / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
+
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout)["activeGoal"] == "G1 - Structured goal"
+    goal = state["goalMatrix"]["childGoals"][0]
+    assert goal["contractComplete"] is True
+    assert goal["touchedPaths"] == "core/goal_guard.py, tests/test_goal_guard.py"
+    assert "Delivery boundary: structured start only" in active_text
+    assert audit.returncode == 0, audit.stderr
+
+
+def test_plain_start_creates_blocked_draft_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], "Unclear draft")
+        audit = run_guard(["audit", "--root", tmp])
+        checkpoint = run_guard(
+            [
+                "checkpoint",
+                "--root",
+                tmp,
+                "--",
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('draft-ran').write_text('wrong')",
+            ]
+        )
+        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+
+        assert started.returncode == 0, started.stderr
+        assert state["goalMatrix"]["childGoals"][0]["contractComplete"] is False
+        assert audit.returncode == 1
+        assert "active goal contract is incomplete" in audit.stderr
+        assert checkpoint.returncode == 1
+        assert not (root / "draft-ran").exists()
+
+
+def test_structured_start_rejects_metadata_only_verification_before_state_write():
+    contract = {
+        "userOutcome": "Weak contract",
+        "engineeringSlice": "Record status",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py"],
+        "deliveryBoundary": "one parser branch",
+        "skipped": "none",
+        "truthSource": "status",
+        "verification": "python3 core/goal_guard.py status --root .",
+        "developmentFlow": "inspect -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+
+        assert started.returncode == 2
+        assert "metadata-only" in started.stderr
+        assert not (root / ".goal-matrix" / "state.json").exists()
+
+
+def test_structured_start_rejects_non_string_verification_without_traceback():
+    contract = {
+        "userOutcome": "Invalid contract",
+        "engineeringSlice": "Reject invalid input",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": ["core/goal_guard.py"],
+        "deliveryBoundary": "input validation only",
+        "skipped": "none",
+        "truthSource": "CLI exit code",
+        "verification": ["python3", "--version"],
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+
+        started = run_guard(["start", "--root", tmp], json.dumps(contract))
+
+        assert started.returncode == 2
+        assert "missing verification" in started.stderr
+        assert "Traceback" not in started.stderr
+        assert not (root / ".goal-matrix" / "state.json").exists()
+
+
 def test_start_command_keeps_existing_active_goal():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
@@ -3591,78 +4013,27 @@ P2 Markdown canonical state
     assert "verify each child goal before checkpoint" in active_text
 
 
-def test_start_self_evolution_prompt_seeds_concrete_batch_from_repo_signals():
+def test_start_self_evolution_prompt_does_not_invent_backlog():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
         started = run_guard(["start", "--root", tmp], "开始进化")
         active_verify_result = run_guard(["active-verify", "--root", tmp])
         status_result = run_guard(["status", "--root", tmp])
-        active_text = (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
-        checkpointed = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        continued_status_result = run_guard(["status", "--root", tmp])
-        next_active_verify = run_guard(["active-verify", "--root", tmp])
 
     assert started.returncode == 0, started.stderr
-    assert active_verify_result.returncode == 0, active_verify_result.stderr
+    assert active_verify_result.returncode == 1
+    assert "metadata-only" in active_verify_result.stderr
     payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - Schedule self-evolution backlog"
-    assert payload["plannedChildGoals"] == ["G2", "G3", "G4"]
-    assert "Verification: python3 core/goal_guard.py audit --root ." in active_text
-    assert checkpointed.returncode == 0, checkpointed.stderr
-    assert json.loads(checkpointed.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
-    assert next_active_verify.returncode == 0, next_active_verify.stderr
+    assert payload["activeGoal"] == "G1 - 开始进化"
+    assert "plannedChildGoals" not in payload
 
     status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - Schedule self-evolution backlog"
-    assert status["nextLoop"] == "G2 - Machine-readable next action is explicit"
-    assert status["goalMatrix"]["total"] == 4
-    assert status["goalMatrix"]["pending"] == 4
-    child_titles = [goal["userOutcome"] for goal in status["goalMatrix"]["childGoals"][1:]]
-    assert child_titles == [
-        "Machine-readable next action is explicit",
-        "Visible goal runtime contract is explicit",
-        "Self-evolution loop has an end-to-end proof",
-    ]
-    continued_status = json.loads(continued_status_result.stdout)
-    assert continued_status["activeGoal"] == "G2 - Machine-readable next action is explicit"
-    assert continued_status["goalMatrix"]["pending"] == 3
-
-
-def test_self_evolution_loop_has_end_to_end_proof():
-    with tempfile.TemporaryDirectory() as tmp:
-        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-
-        started = run_guard(["start", "--root", tmp], "开始进化")
-        first = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        second = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        third = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        fourth = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        status_result = run_guard(["status", "--root", tmp])
-
-    assert started.returncode == 0, started.stderr
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
-    assert third.returncode == 0, third.stderr
-    assert fourth.returncode == 0, fourth.stderr
-    assert json.loads(first.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
-    assert json.loads(second.stdout)["nextActiveGoal"] == "G3 - Visible goal runtime contract is explicit"
-    assert json.loads(third.stdout)["nextActiveGoal"] == "G4 - Self-evolution loop has an end-to-end proof"
-    assert json.loads(fourth.stdout)["nextActiveGoal"] is None
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] is None
+    assert status["activeGoal"] == "G1 - 开始进化"
     assert status["nextLoop"] is None
-    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 1
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["contractComplete"] is False
 
 
 def test_start_command_escapes_pipe_in_prompt_title():
@@ -3758,6 +4129,14 @@ def test_prune_archive_keeps_json_state_and_visible_recent_done():
         status_result = run_guard(["status", "--root", tmp])
         matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
         archive_text = (root / ".goal-matrix" / "goals" / "archive.md").read_text(encoding="utf-8")
+        state_after_prune = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+
+        checkpoint = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, "-c", "print('verified')"]
+        )
+        final_state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        final_matrix = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
+        final_archive = (root / ".goal-matrix" / "goals" / "archive.md").read_text(encoding="utf-8")
 
     assert result.returncode == 0, result.stderr
     assert "| G4 | Done 4 |" in matrix_text
@@ -3767,16 +4146,52 @@ def test_prune_archive_keeps_json_state_and_visible_recent_done():
     status = json.loads(status_result.stdout)
     assert status["goalMatrix"]["total"] == 5
     assert status["goalMatrix"]["pending"] == 1
+    assert state_after_prune["projection"]["keepDone"] == 1
+    assert checkpoint.returncode == 0, checkpoint.stderr
+    assert final_state["projection"]["keepDone"] == 1
+    assert "| G5 | Active slice |" in final_matrix
+    assert "| G4 | Done 4 |" not in final_matrix
+    assert "| G4 | Done 4 |" in final_archive
 
 
-def test_archive_snapshot_trust_boundary_is_documented():
+def test_audit_rejects_archive_projection_drift():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Archive truth").returncode == 0
+        assert run_guard(["prune", "--root", tmp, "--keep-done", "0"]).returncode == 0
+        archive_path = root / ".goal-matrix" / "goals" / "archive.md"
+        archive_path.write_text(archive_path.read_text(encoding="utf-8") + "manual edit\n", encoding="utf-8")
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "archive projection drift" in result.stderr
+
+
+def test_audit_rejects_invalid_projection_retention():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Projection config").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["projection"]["keepDone"] = -1
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "projection.keepDone must be a non-negative integer" in result.stderr
+
+
+def test_archive_projection_trust_boundary_is_documented():
     protocol = read_text("core/protocol.md")
 
     assert ".goal-matrix/goals/archive.md" in protocol
-    assert "immutable" in protocol
-    assert "read-only snapshot" in protocol
-    assert "not part of drift detection" in protocol
-    assert "not a trusted source of current goal state" in protocol
+    assert "generated projection" in protocol
+    assert "drift detection" in protocol
+    assert "state.json" in protocol
 
 
 def test_audit_rejects_visible_done_goal_with_status_only_verification():
@@ -3834,6 +4249,114 @@ def test_verification_helpers_are_in_subdomain_module():
     }
 
 
+def test_policy_helpers_are_in_subdomain_module():
+    policy_path = ROOT / "core" / "goal_policy.py"
+    spec = importlib.util.spec_from_file_location("goal_policy", policy_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert callable(module.policy_gate)
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def collect_payload_paths(", "def policy_gate_problems(", "def policy_gate("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_policy.py" in read_text(path)
+
+
+def test_publish_helpers_are_in_subdomain_module():
+    publish_path = ROOT / "core" / "goal_publish.py"
+    spec = importlib.util.spec_from_file_location("goal_publish", publish_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(publish_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    assert callable(module.publish_gate)
+    assert module.command_is_git_push("git -C . push origin main")
+    assert not module.command_is_git_push("git status")
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def command_is_git_push(", "def publish_state_problems(", "def publish_gate("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_publish.py" in read_text(path)
+
+
+def test_projection_helpers_are_in_subdomain_module():
+    projection_path = ROOT / "core" / "goal_projection.py"
+    spec = importlib.util.spec_from_file_location("goal_projection", projection_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(projection_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    row = module.markdown_table_row(["G1", "Keep | escaped"])
+    assert module.split_markdown_table_row(row) == ["G1", "Keep | escaped"]
+    goals = [
+        {"id": "G1", "status": "Done"},
+        {"id": "G2", "status": "Done"},
+        {"id": "G3", "status": "Pending"},
+    ]
+    visible, archived = module.split_goal_projections(goals, "G3 - Pending", 1)
+    assert [goal["id"] for goal in visible] == ["G2", "G3"]
+    assert [goal["id"] for goal in archived] == ["G1"]
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def split_markdown_table_row(", "def render_goal_matrix(", "def write_goal_projections("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_projection.py" in read_text(path)
+
+
+def test_state_helpers_are_in_subdomain_module():
+    state_path = ROOT / "core" / "goal_state.py"
+    spec = importlib.util.spec_from_file_location("goal_state", state_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(state_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    goals = [
+        {"id": "G1", "userOutcome": "Done", "status": "Done"},
+        {"id": "G2", "userOutcome": "Next", "status": "Pending"},
+    ]
+    assert callable(module.write_state_json)
+    assert module.next_goal_id(goals) == "G3"
+    assert module.pending_goal_after_active(goals, "G1 - Done")["id"] == "G2"
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def load_state_json(", "def next_action_payload(", "def write_state_json("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_state.py" in read_text(path)
+
+
+def test_gate_helpers_are_in_subdomain_module():
+    gate_path = ROOT / "core" / "goal_gate.py"
+    spec = importlib.util.spec_from_file_location("goal_gate", gate_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(gate_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    assert callable(module.audit_project)
+    assert callable(module.completion_gate)
+    assert any("missing completion evidence" in problem for problem in module.audit("Done"))
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def audit_project(", "def completion_gate(", "def gate_decision("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_gate.py" in read_text(path)
+
+
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -3881,14 +4404,14 @@ def test_audit_rejects_visible_goal_matrix_drift_from_state_json():
         result = run_guard(["audit", "--root", tmp])
 
     assert result.returncode == 1
-    assert "goal matrix drift: G1 userOutcome differs from state.json" in result.stderr
+    assert "goal matrix projection drift: goal-matrix.md differs from state.json" in result.stderr
 
 
 def test_state_json_remains_authoritative_across_checkpoint():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "JSON truth").returncode == 0
+        assert run_structured_start(tmp, "JSON truth").returncode == 0
         matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
         matrix_path.write_text(
             matrix_path.read_text(encoding="utf-8").replace("JSON truth", "Edited by hand"),
@@ -3923,7 +4446,7 @@ def test_audit_rejects_missing_pending_projection_row():
         result = run_guard(["audit", "--root", tmp])
 
     assert result.returncode == 1
-    assert "goal matrix drift: required goal G1 is missing from Markdown projection" in result.stderr
+    assert "goal matrix projection drift: goal-matrix.md differs from state.json" in result.stderr
 
 
 def test_checkpoint_preserves_extended_matrix_fields():
@@ -3948,7 +4471,7 @@ def test_checkpoint_preserves_extended_matrix_fields():
 def test_checkpoint_command_requires_passing_verification_before_advancing_goal():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
 
         failed = run_guard(["checkpoint", "--root", tmp, "--", sys.executable, "-c", "raise SystemExit(7)"])
         status_result = run_guard(["status", "--root", tmp])
@@ -3963,7 +4486,7 @@ def test_checkpoint_command_requires_passing_verification_before_advancing_goal(
 def test_checkpoint_command_rejects_metadata_only_status_verification():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
 
         rejected = run_guard(
             [
@@ -3991,7 +4514,7 @@ def test_checkpoint_command_rejects_metadata_only_status_verification():
 def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        assert run_structured_start(tmp, "ship real loop step").returncode == 0
         verify_command = [sys.executable, "-c", "print('verified proof')"]
 
         verified = run_guard(
@@ -4293,8 +4816,9 @@ def test_doctor_runtime_contract_is_explicit():
     assert runtime["visibleGoalRequiresCreateGoal"] is True
     assert runtime["hookCanCreateCodexGoal"] is False
     assert runtime["checkpointPromotesNextGoal"] is True
-    assert runtime["runtimeMustContinueAfterCheckpoint"] is True
-    assert runtime["continuationMode"] == "checkpoint_promotes_state_runtime_continues"
+    assert runtime["runtimeContinuesWhilePendingGoalsExist"] is True
+    assert runtime["completionWhenNoPendingGoal"] is True
+    assert runtime["continuationMode"] == "checkpoint_promotes_existing_pending_goal"
     assert "create_goal" in runtime["minimalFixPath"]
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -4393,7 +4917,61 @@ def test_doctor_reports_native_pre_push_hook_install_hint():
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["nativeHooks"]["prePushHookInstalled"] is False
+    assert payload["nativeHooks"]["prePushHookExists"] is False
+    assert payload["nativeHooks"]["prePushHookState"] == "absent"
     assert "--install-git-hook" in payload["nativeHooks"]["installCommand"]
+
+
+def test_doctor_reports_current_stale_and_broken_managed_pre_push_hooks():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        install = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "install_adapter.py"),
+                "codex",
+                "--target",
+                str(repo),
+                "--install-git-hook",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+        hook = repo / ".git" / "hooks" / "pre-push"
+        current = run_guard(["doctor", "--root", str(repo)])
+
+        expected_guard = ROOT / "core" / "goal_guard.py"
+        stale_guard = Path(tmp) / "old-plugin" / "core" / "goal_guard.py"
+        hook.write_text(
+            hook.read_text(encoding="utf-8").replace(str(expected_guard), str(stale_guard)),
+            encoding="utf-8",
+        )
+        stale = run_guard(["doctor", "--root", str(repo)])
+
+        hook.write_text(
+            hook.read_text(encoding="utf-8").replace(str(stale_guard), str(expected_guard)),
+            encoding="utf-8",
+        )
+        hook.chmod(0o644)
+        broken = run_guard(["doctor", "--root", str(repo)])
+
+    assert install.returncode == 0, install.stderr
+    current_hooks = json.loads(current.stdout)["nativeHooks"]
+    assert current_hooks["prePushHookState"] == "current"
+    assert current_hooks["prePushHookInstalled"] is True
+    assert current_hooks["prePushHookManaged"] is True
+    assert current_hooks["prePushHookGuardPath"] == str(expected_guard)
+
+    stale_hooks = json.loads(stale.stdout)["nativeHooks"]
+    assert stale_hooks["prePushHookState"] == "stale"
+    assert stale_hooks["prePushHookInstalled"] is False
+    assert stale_hooks["refreshRequired"] is True
+
+    broken_hooks = json.loads(broken.stdout)["nativeHooks"]
+    assert broken_hooks["prePushHookState"] == "broken"
+    assert broken_hooks["prePushHookInstalled"] is False
+    assert broken_hooks["prePushHookExecutable"] is False
 
 
 def test_gate_command_returns_design_for_missing_design_evidence():

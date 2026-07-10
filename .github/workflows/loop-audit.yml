@@ -5,8 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "17 9 * * *"
 
 permissions:
   contents: read
@@ -18,39 +16,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.12", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
-      - name: Python lint
-        run: python3 scripts/lint_python.py
-      - name: Python tests
-        run: python3 tests/test_goal_guard.py
-      - name: Package validator
-        run: python3 scripts/validate_plugin_package.py --root .
-      - name: JavaScript extension tests
-        run: node --test pi-extension/test/extension.test.js
-      - name: Installer smoke
-        run: |
-          target="$RUNNER_TEMP/goal-matrix-install-smoke"
-          python3 scripts/install_adapter.py codex --target "$target"
-          test -f "$target/.goal-matrix/project-policy.json"
-      - name: Hook simulation
-        run: |
-          printf '%s\n' '{"prompt":"形成goal 迭代矩阵"}' | python3 core/goal_guard.py hook UserPromptSubmit >/tmp/user-prompt.json
-          printf '%s\n' '{"tool_input":{"cmd":"git status --short"}}' | python3 core/goal_guard.py policy-gate --root . --hook
-          printf '%s\n' '{"tool_input":{"cmd":"git status --short"}}' | python3 core/goal_guard.py publish-gate --root . --hook
-          python3 core/goal_guard.py hook PreToolUse >/tmp/pre-tool.json
-          python3 core/goal_guard.py hook Stop >/tmp/stop.json
-      - name: Loop verify
+          node-version: "24"
+      - name: Shared loop verifier
         env:
           GOAL_MATRIX_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           GOAL_MATRIX_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

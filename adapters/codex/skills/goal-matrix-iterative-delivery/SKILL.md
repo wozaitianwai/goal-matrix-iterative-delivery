@@ -53,6 +53,8 @@ Verification: <smallest real check>
 Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 ```
 
+Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Plain text input creates a blocked draft; do not execute or checkpoint it.
+
 ## Loop Engineering
 
 Engineering pass:
@@ -61,10 +63,10 @@ Engineering pass:
 project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
 ```
 
-- A self-evolution run keeps one active child goal at a time, but continues after each verified checkpoint; stop only at budget, blocker, or no pending goal.
+- A self-evolution run continues only through pending goals already recorded in state; when none remains, report complete instead of synthesizing a backlog.
 - Recoverable external prerequisites, such as token, cookies, login, or service restart, keep the active goal open with a concrete next action instead of becoming a blocked goal.
 - Fast Lane is available only for trivial typo, copy, or single-function edits with no active goal; keep path/publish policy and focused verification, but skip goal-matrix checkpointing.
-- Before push, squash or merge fragmented local commits unless the user asks to preserve them.
+- Before push, preserve verified checkpoint commits and require a clean, integrated branch with closed goals and checkpoint evidence.
 - Final push needs final verification evidence and a clear branch/history state.
 
 ## Hook Workflow

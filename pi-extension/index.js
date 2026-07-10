@@ -48,10 +48,25 @@ export function projectRoot(ctx) {
 
 export function readNotificationConfig(root) {
   const configDir = join(root, ".goal-matrix");
-  return mergeConfig(
-    mergeConfig(DEFAULT_CONFIG, readJson(join(configDir, "notifications.json"))),
-    readJson(join(configDir, "notifications.local.json")),
-  );
+  const tracked = readJson(join(configDir, "notifications.json"));
+  const local = readJson(join(configDir, "notifications.local.json"));
+  const config = mergeConfig(mergeConfig(DEFAULT_CONFIG, tracked), local);
+  const localWebhook = isObject(local.webhook) ? local.webhook : {};
+  const url = typeof localWebhook.url === "string" ? localWebhook.url : "";
+  const urlEnv = typeof localWebhook.urlEnv === "string" && localWebhook.urlEnv
+    ? localWebhook.urlEnv
+    : DEFAULT_CONFIG.webhook.urlEnv;
+  const envUrl = urlEnv ? process.env[urlEnv] : "";
+
+  config.webhook = {
+    ...config.webhook,
+    enabled: localWebhook.enabled === false
+      ? false
+      : localWebhook.enabled === true || Boolean(url || envUrl),
+    url,
+    urlEnv,
+  };
+  return config;
 }
 
 function popupEventEnabled(config, eventName) {

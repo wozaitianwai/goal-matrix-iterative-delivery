@@ -1,16 +1,16 @@
 # Loop Configuration - Goal Matrix Delivery
 
-This repository keeps one manual package-triage loop for plugin readiness.
+This repository keeps one CI-backed package-triage loop for plugin readiness.
 
 ## Active Loops
 
 | Pattern | Cadence | Status | Prompt |
 | --- | --- | --- | --- |
-| package-triage | manual or daily | L2 local / L3 remote-enforced | Run `python3 scripts/loop_audit.py --root . --json`; update `STATE.md`; remote verifier must require `L3 remote-ci-activity`. |
+| package-triage | push or pull request | L2 local; L3 only in trusted current-head CI | Run `python3 scripts/loop_audit.py --root . --json`; remote verifier must require `L3 remote-ci-activity`. |
 
 ## Loop Engineering Completion Matrix
 
-G23-G36 are Done: readiness matrix, verifier skill, workflow checks, remote CI evidence, gap register, shared verifier, release/install readback, and cache drift checks are all represented by local tests plus `scripts/loop_audit.py --root . --json`.
+The machine goal status is read from `.goal-matrix/state.json`; this document does not duplicate G-number status. Local completion evidence comes from `scripts/loop_verify.py`, while L3 requires trusted GitHub Actions context matching the checked-out HEAD. Recorded run-log readback is informational only. A pull request and required-check ruleset are the remaining remote enforcement step.
 
 ## Readiness Levels
 
@@ -18,18 +18,7 @@ G23-G36 are Done: readiness matrix, verifier skill, workflow checks, remote CI e
 | --- | --- | --- |
 | L1 | report-only | state file, loop config, budget, run log, triage prompt |
 | L2 | assisted-with-verifier | L1 plus completion matrix and packaged independent verifier |
-| L3 | remote-ci-activity | L2 plus GitHub remote, workflow checks, and either matching current-run CI context or completed current-head readback evidence |
-
-## Engineering Gap Register
-
-| Gap | Current state | Missing for loop-engineering parity | Next action |
-| --- | --- | --- | --- |
-| remote-ci | GitHub Actions current-run context or readback exists | None for L3 remote CI evidence | Resolved: keep run URL/status in `loop-run-log.md`; CI runs `loop_verify.py --require-level L3` against its checked-out SHA. |
-| maker-checker | Branch/worktree verifier path exists | None for maker-checker separation evidence | Resolved: keep branch/worktree/verifier evidence in `loop-run-log.md` |
-| run-evidence | `loop-run-log.md` has repeated timestamped runs with outcomes and audit signal `repeatedRunEvidence=true` | None for repeated local run evidence | Resolved: keep two or more JSON-line run records with outcomes |
-| distribution | Pushed source validates and installs from release source | None for pushed-source distribution verification | Resolved: keep clone/install/doctor evidence in `loop-run-log.md` |
-| connectors | GitHub connector readback works for `wozaitianwai/goal-matrix-iterative-delivery`; write tools exist but no PR/issue/comment/release action is requested | None for current loop; connector writes need explicit user-approved PR/issue/comment/release task | Resolved: defer connector writes until an acting remote task exists |
-| governance | `scripts/check_governance.py` is wired into `scripts/loop_verify.py` and CI to block sensitive paths or publish actions without approval | None for local/CI governance gate evidence | Resolved: keep policy, tests, and verifier output together |
+| L3 | remote-ci-activity | L2 plus GitHub remote, workflow checks, and trusted GitHub Actions context matching the checked-out HEAD |
 
 ## Human Gates
 
@@ -54,4 +43,4 @@ G23-G36 are Done: readiness matrix, verifier skill, workflow checks, remote CI e
 
 ## Next Loop
 
-No unresolved loop-engineering gaps remain in the current matrix.
+Push the current checkpoint branch through a pull request, verify every Python matrix leg, then activate and read back the required-check ruleset for `main`.

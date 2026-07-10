@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.12-codex.1 - 2026-07-10
+
+- Harden hook execution and notification egress, fail closed on invalid policy, and keep structured JSON goal state authoritative over bounded Markdown projections.
+- Require trusted current-head GitHub Actions context for L3, run the shared verifier across Python 3.10/3.12/3.14, and preserve verified checkpoint history through guarded feature-branch publication.
+- Split policy, publish, projection, state, audit, gate, native-hook, and verification domains out of `goal_guard.py`, and make the marketplace the sole global install path.
+- Publish the completed remediation under plugin version `0.1.12+codex.20260710112811` and pin Codex marketplace installation to `v0.1.12-codex.1`.
+
 ## v0.1.11-codex.2 - 2026-07-10
 
 - Reissue `v0.1.11` after making the direct GitHub Actions Python test runner hermetic: fixtures clear inherited `GITHUB_*` variables and inject only the CI context they intend to test.

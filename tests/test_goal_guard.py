@@ -742,12 +742,12 @@ def test_loop_engineering_completion_matrix_is_audited():
     assert audit["levels"]["L1"] == "report-only"
     assert audit["levels"]["L2"] == "assisted-with-verifier"
     assert audit["levels"]["L3"] == "remote-ci-activity"
-    if audit["signals"]["remoteRunEvidenceCurrentHead"]:
+    if audit["signals"]["remoteCiContextCurrentHead"]:
         assert audit["blocked"] == []
-    elif audit["signals"]["remoteRunEvidence"]:
+    elif audit["signals"]["remoteCiContext"]:
         assert any("current HEAD" in item for item in audit["blocked"])
-    elif audit["signals"]["githubRemote"]:
-        assert any("Remote workflow run evidence" in item for item in audit["blocked"])
+    elif audit["signals"]["githubRemote"] and audit["signals"]["githubWorkflows"]:
+        assert any("informational only" in item for item in audit["blocked"])
     else:
         assert any("GitHub remote" in item for item in audit["blocked"])
 
@@ -778,7 +778,8 @@ def test_loop_engineering_gap_register_tracks_unfinished_work():
 
     for phrase in (
         "Engineering Gap Register",
-        "Resolved: keep run URL/status",
+        "run-log readback is informational only",
+        "recorded run URLs/statuses cannot promote local audits",
         "maker-checker",
         "run-evidence",
         "Resolved: keep clone/install/doctor evidence",
@@ -841,7 +842,7 @@ def test_loop_audit_reports_unresolved_gap_register_items():
     if audit["signals"]["remoteRunEvidenceCurrentHead"]:
         assert audit["nextAction"] == "No unresolved loop-engineering gaps."
     else:
-        assert audit["nextAction"] == "Append current-head remote-ci-readback evidence after the workflow passes."
+        assert audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
 
 def test_loop_audit_flags_oversized_run_log_for_summary_goal():
@@ -1569,7 +1570,7 @@ remote-ci-activity
         )
         write_file(
             root / "loop-run-log.md",
-            "# Runs\n\n## Recent Runs\nremote-ci-readback github-check-run\n",
+            "# Runs\n\n## Recent Runs\noutcome remote-ci-readback github-check-run\n",
         )
         prose = subprocess.run(
             [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
@@ -1623,11 +1624,12 @@ remote-ci-activity
     assert present.returncode == 0, present.stderr
     present_audit = json.loads(present.stdout)
     assert present_audit["signals"]["remoteRunEvidence"] is True
-    assert present_audit["signals"]["remoteRunEvidenceCurrentHead"] is True
-    assert present_audit["level"] == "L3"
+    assert present_audit["signals"]["recordedRemoteReadbackCurrentHead"] is True
+    assert present_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
+    assert present_audit["level"] == "L2"
 
 
-def test_loop_audit_remote_evidence_freshness_boundary():
+def test_loop_audit_recorded_readback_never_promotes_l3():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
@@ -1712,14 +1714,16 @@ remote-ci-activity
     assert stale_audit["signals"]["remoteRunEvidence"] is True
     assert stale_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
     assert stale_audit["level"] == "L2"
-    assert any("current HEAD" in item for item in stale_audit["blocked"])
-    assert stale_audit["nextAction"] == "Append current-head remote-ci-readback evidence after the workflow passes."
+    assert any("informational only" in item for item in stale_audit["blocked"])
+    assert stale_audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
     assert fresh.returncode == 0, fresh.stderr
     fresh_audit = json.loads(fresh.stdout)
     assert fresh_audit["signals"]["remoteRunEvidence"] is True
-    assert fresh_audit["signals"]["remoteRunEvidenceCurrentHead"] is True
-    assert fresh_audit["level"] == "L3"
+    assert fresh_audit["signals"]["recordedRemoteReadbackCurrentHead"] is True
+    assert fresh_audit["signals"]["remoteRunEvidenceCurrentHead"] is False
+    assert fresh_audit["level"] == "L2"
+    assert fresh_audit["nextAction"] == "Run the current HEAD verifier in GitHub Actions."
 
 
 def make_l3_context_repo(root):
@@ -1777,6 +1781,49 @@ remote-ci-activity
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def test_loop_audit_levels_require_documented_signals_not_score():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_l3_context_repo(root)
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+        loop_path = root / "LOOP.md"
+        complete_loop = loop_path.read_text(encoding="utf-8")
+
+        loop_path.write_text(
+            complete_loop.replace("## Loop Engineering Completion Matrix\n", ""),
+            encoding="utf-8",
+        )
+        without_matrix = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+        loop_path.write_text(
+            complete_loop.replace("package-triage", "manual-review"),
+            encoding="utf-8",
+        )
+        without_triage = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+    matrix_audit = json.loads(without_matrix.stdout)
+    assert matrix_audit["score"] >= 58
+    assert matrix_audit["signals"]["completionMatrix"] is False
+    assert matrix_audit["level"] == "L1"
+
+    triage_audit = json.loads(without_triage.stdout)
+    assert triage_audit["score"] >= 58
+    assert triage_audit["signals"]["triage"] is False
+    assert triage_audit["level"] == "L0"
 
 
 def test_loop_audit_l3_required_rejects_stale_evidence():

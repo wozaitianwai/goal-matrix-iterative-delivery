@@ -104,6 +104,8 @@ Each small goal must carry its own flow:
 - verify: run the named check or read back the authoritative truth source.
 - checkpoint: update goal state, decisions, and skipped scope.
 
+L3 `remote-ci-activity` is established only inside a trusted GitHub Actions run whose `GITHUB_SHA` matches the checked-out HEAD. Recorded run-log readback is informational evidence and cannot promote a local audit to L3.
+
 ## Skill and plugin routing
 
 Supporting skills and plugins are selected by loop phase, not by habit or novelty:

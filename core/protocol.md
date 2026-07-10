@@ -145,7 +145,7 @@ Fast Lane is allowed only when the project is initialized, there is no active go
 
 Broad prompt handling: first generate a pending matrix with scope, truth source, verification, dependencies, risk, and parallel-safety metadata. Keep one scheduler/acceptance active goal in the main thread; optional subagents may only produce candidates or investigations. The main thread reviews outputs, runs the real verification, and checkpoints child goals one at a time.
 
-A self-evolution run still exposes only one active child goal at a time, but it does not stop after one verified checkpoint when more pending goals exist. After checkpoint, promote the next pending goal and keep executing. Stop only at budget, blocker, or no pending goal.
+A self-evolution run exposes one active child goal at a time and continues only through pending goals already recorded in `state.json`. After checkpoint, promote the next existing pending goal; when none remains, report complete instead of synthesizing a backlog. Stop earlier only at budget or blocker.
 
 ## Hook phase gates
 

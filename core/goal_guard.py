@@ -137,7 +137,7 @@ UNSET = object()
 
 LOOP_CONTEXT = """Loop engineering:
 - Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
-- self-evolution run: keep one active child goal at a time, then continue with the next pending goal after each verified checkpoint; stop only at budget, blocker, or no pending goal.
+- self-evolution run: continue only through pending goals already recorded in state; never synthesize work when no pending goal remains.
 - checkpoint commit: make small local commits only after a verified child goal.
 - push policy: preserve verified checkpoint commits; publish only from a clean, integrated branch with closed goals and checkpoint evidence.
 - final push requires final verification evidence and a clear branch/history state.
@@ -1187,59 +1187,11 @@ def doctor_runtime_hints(root):
         "visibleGoalRequiresCreateGoal": True,
         "hookCanCreateCodexGoal": False,
         "checkpointPromotesNextGoal": True,
-        "runtimeMustContinueAfterCheckpoint": True,
-        "continuationMode": "checkpoint_promotes_state_runtime_continues",
+        "runtimeContinuesWhilePendingGoalsExist": True,
+        "completionWhenNoPendingGoal": True,
+        "continuationMode": "checkpoint_promotes_existing_pending_goal",
         "minimalFixPath": "load the plugin marketplace/cache for hooks, then call Codex create_goal for visible goals",
     }
-
-
-def self_evolution_seed_items(root):
-    status = status_payload(root)
-    runtime = doctor_runtime_hints(root)
-    items = []
-    next_loop = status.get("nextLoop")
-    if next_loop == "G0 - Initialize project governance":
-        next_loop = None
-    if not next_loop:
-        items.append(
-            {
-                "title": "Machine-readable next action is explicit",
-                "risk": "P1",
-                "engineering_slice": "Surface nextAction and subagentCandidates in status or doctor output so loop continuation does not depend on prose",
-                "truth_source": "status and doctor JSON readback",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-            }
-        )
-    if runtime.get("visibleGoalRequiresCreateGoal") and not runtime.get("hookCanCreateCodexGoal"):
-        items.append(
-            {
-                "title": "Visible goal runtime contract is explicit",
-                "risk": "P1",
-                "engineering_slice": "Keep create_goal and hook runtime limits aligned across runtime output and docs",
-                "truth_source": "runtime readback and docs invariants",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-            }
-        )
-    items.append(
-        {
-            "title": "Self-evolution loop has an end-to-end proof",
-            "risk": "P2",
-            "engineering_slice": "Add one concrete integration proof that seed -> checkpoint -> next goal promotion stays continuous",
-            "truth_source": "self-evolution integration test readback",
-            "verification": "`python3 core/goal_guard.py audit --root .`",
-        }
-    )
-    return items
-
-
-def wants_self_evolution(prompt):
-    return bool(
-        re.search(
-            r"(开始|继续)\s*(自我)?\s*进化|连续\s*迭代|自动\s*迭代|self[-\s]?evolution|auto[-\s]?iterat",
-            prompt_text(prompt),
-            re.IGNORECASE,
-        )
-    )
 
 
 def goal_id_after(goal_id, offset):
@@ -1283,27 +1235,11 @@ def start_project(root, prompt):
         return 0
 
     items = broad_prompt_items(prompt)
-    self_evolution_seed = False
-    if not items and wants_self_evolution(prompt):
-        self_evolution_seed = True
-        items = self_evolution_seed_items(root)
     if items:
-        scheduler_title = "Schedule self-evolution backlog" if self_evolution_seed else "Schedule broad prompt delivery"
-        scheduler_slice = (
-            "Create one backlog-seeding goal so self-evolution does not terminate on an empty matrix"
-            if self_evolution_seed
-            else "Classify dependency order and review child outputs before checkpoint"
-        )
-        boundary = (
-            "self-evolution scheduler/acceptance active goal; verify the seeded backlog before checkpoint"
-            if self_evolution_seed
-            else "scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint"
-        )
-        skipped = (
-            "automatic code edits and hardcoded project-specific backlog"
-            if self_evolution_seed
-            else "subagent dispatch and child implementation"
-        )
+        scheduler_title = "Schedule broad prompt delivery"
+        scheduler_slice = "Classify dependency order and review child outputs before checkpoint"
+        boundary = "scheduler/acceptance active goal for a broad prompt; classify dependencies, parallel safety, and verify each child goal before checkpoint"
+        skipped = "subagent dispatch and child implementation"
         active_goal = f"{goal_id} - {scheduler_title}"
         scheduler_goal = {
             "id": goal_id,

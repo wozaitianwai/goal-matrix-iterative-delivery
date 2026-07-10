@@ -119,7 +119,8 @@ def test_core_protocol_defines_loop_engineering_contract():
         "Loop engineering",
         "project initialization status -> active goal -> failing check",
         "self-evolution run",
-        "budget, blocker, or no pending goal",
+        "pending goals already recorded",
+        "report complete instead of synthesizing a backlog",
         "checkpoint commit",
         "design_gate",
         "review_gate",
@@ -384,7 +385,8 @@ def test_instruction_adapters_include_full_loop_boundaries():
             "review_gate",
             "Next loop",
             "self-evolution run",
-            "budget, blocker, or no pending goal",
+            "pending goals already recorded",
+            "report complete instead of synthesizing a backlog",
             "visible Codex goal",
         ):
             assert phrase in text, f"{path} missing {phrase}"
@@ -2534,7 +2536,8 @@ def test_user_prompt_submit_triggers_for_self_evolution_runs():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "self-evolution run" in context
-    assert "budget, blocker, or no pending goal" in context
+    assert "pending goals already recorded" in context
+    assert "never synthesize work" in context
 
 
 def test_codex_hook_config_wires_loop_events():
@@ -3946,78 +3949,27 @@ P2 Markdown canonical state
     assert "verify each child goal before checkpoint" in active_text
 
 
-def test_start_self_evolution_prompt_seeds_concrete_batch_from_repo_signals():
+def test_start_self_evolution_prompt_does_not_invent_backlog():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
         started = run_guard(["start", "--root", tmp], "开始进化")
         active_verify_result = run_guard(["active-verify", "--root", tmp])
         status_result = run_guard(["status", "--root", tmp])
-        active_text = (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
-        checkpointed = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        continued_status_result = run_guard(["status", "--root", tmp])
-        next_active_verify = run_guard(["active-verify", "--root", tmp])
 
     assert started.returncode == 0, started.stderr
-    assert active_verify_result.returncode == 0, active_verify_result.stderr
+    assert active_verify_result.returncode == 1
+    assert "metadata-only" in active_verify_result.stderr
     payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - Schedule self-evolution backlog"
-    assert payload["plannedChildGoals"] == ["G2", "G3", "G4"]
-    assert "Verification: python3 core/goal_guard.py audit --root ." in active_text
-    assert checkpointed.returncode == 0, checkpointed.stderr
-    assert json.loads(checkpointed.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
-    assert next_active_verify.returncode == 0, next_active_verify.stderr
+    assert payload["activeGoal"] == "G1 - 开始进化"
+    assert "plannedChildGoals" not in payload
 
     status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - Schedule self-evolution backlog"
-    assert status["nextLoop"] == "G2 - Machine-readable next action is explicit"
-    assert status["goalMatrix"]["total"] == 4
-    assert status["goalMatrix"]["pending"] == 4
-    child_titles = [goal["userOutcome"] for goal in status["goalMatrix"]["childGoals"][1:]]
-    assert child_titles == [
-        "Machine-readable next action is explicit",
-        "Visible goal runtime contract is explicit",
-        "Self-evolution loop has an end-to-end proof",
-    ]
-    continued_status = json.loads(continued_status_result.stdout)
-    assert continued_status["activeGoal"] == "G2 - Machine-readable next action is explicit"
-    assert continued_status["goalMatrix"]["pending"] == 3
-
-
-def test_self_evolution_loop_has_end_to_end_proof():
-    with tempfile.TemporaryDirectory() as tmp:
-        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-
-        started = run_guard(["start", "--root", tmp], "开始进化")
-        first = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        second = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        third = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        fourth = run_guard(
-            ["checkpoint", "--root", tmp, "--", sys.executable, str(GUARD), "active-verify", "--root", tmp]
-        )
-        status_result = run_guard(["status", "--root", tmp])
-
-    assert started.returncode == 0, started.stderr
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
-    assert third.returncode == 0, third.stderr
-    assert fourth.returncode == 0, fourth.stderr
-    assert json.loads(first.stdout)["nextActiveGoal"] == "G2 - Machine-readable next action is explicit"
-    assert json.loads(second.stdout)["nextActiveGoal"] == "G3 - Visible goal runtime contract is explicit"
-    assert json.loads(third.stdout)["nextActiveGoal"] == "G4 - Self-evolution loop has an end-to-end proof"
-    assert json.loads(fourth.stdout)["nextActiveGoal"] is None
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] is None
+    assert status["activeGoal"] == "G1 - 开始进化"
     assert status["nextLoop"] is None
-    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 1
+    assert status["goalMatrix"]["pending"] == 1
+    assert status["goalMatrix"]["childGoals"][0]["contractComplete"] is False
 
 
 def test_start_command_escapes_pipe_in_prompt_title():
@@ -4692,8 +4644,9 @@ def test_doctor_runtime_contract_is_explicit():
     assert runtime["visibleGoalRequiresCreateGoal"] is True
     assert runtime["hookCanCreateCodexGoal"] is False
     assert runtime["checkpointPromotesNextGoal"] is True
-    assert runtime["runtimeMustContinueAfterCheckpoint"] is True
-    assert runtime["continuationMode"] == "checkpoint_promotes_state_runtime_continues"
+    assert runtime["runtimeContinuesWhilePendingGoalsExist"] is True
+    assert runtime["completionWhenNoPendingGoal"] is True
+    assert runtime["continuationMode"] == "checkpoint_promotes_existing_pending_goal"
     assert "create_goal" in runtime["minimalFixPath"]
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")

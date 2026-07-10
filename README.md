@@ -76,6 +76,7 @@ Checkpoint promotes the next goal in state; the runtime still has to continue ex
 - `.goal-matrix/project-policy.json` is the target project runtime policy source.
 - `loop-governance.json` is plugin repository autonomy for this repo's own checks.
 - `.goal-matrix/state.json` owns the active contract, matrix state, and Done-row retention; every state write regenerates the visible and archive Markdown projections, and `audit` checks both.
+- Pushes and pull requests run the shared verifier once on Python 3.10, 3.12, and 3.14; each matrix leg must establish L3 from its current GitHub Actions context.
 - Hooks guide/block; they do not run hidden work or push code.
 - Codex lifecycle adapter is the only lifecycle adapter in this package.
 - Codex hook enforcement covers Codex tool calls only; terminal git push requires the optional native pre-push hook.

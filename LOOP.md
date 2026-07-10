@@ -1,12 +1,12 @@
 # Loop Configuration - Goal Matrix Delivery
 
-This repository keeps one manual package-triage loop for plugin readiness.
+This repository keeps one CI-backed package-triage loop for plugin readiness.
 
 ## Active Loops
 
 | Pattern | Cadence | Status | Prompt |
 | --- | --- | --- | --- |
-| package-triage | manual or daily | L2 local / L3 remote-enforced | Run `python3 scripts/loop_audit.py --root . --json`; update `STATE.md`; remote verifier must require `L3 remote-ci-activity`. |
+| package-triage | push or pull request | L2 local / L3 remote-enforced | Run `python3 scripts/loop_audit.py --root . --json`; remote verifier must require `L3 remote-ci-activity`. |
 
 ## Loop Engineering Completion Matrix
 

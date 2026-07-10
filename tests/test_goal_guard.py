@@ -1985,23 +1985,30 @@ def test_loop_verify_script_and_ci_share_one_gate():
     assert "GOAL_MATRIX_APPROVED" not in workflow_text
     assert "fetch-depth: 0" in workflow_text
     assert "fetch-tags: true" in workflow_text
-    assert "python3 scripts/loop_verify.py" in workflow_text
+    assert workflow_text.count("python3 scripts/loop_verify.py --require-level L3") == 1
 
 
-def test_ci_workflow_lists_native_test_surfaces_explicitly():
-    text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+def test_ci_workflow_delegates_native_surfaces_to_shared_verifier():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+    verify_text = (ROOT / "scripts" / "loop_verify.py").read_text(encoding="utf-8")
     for phrase in (
         "python3 scripts/lint_python.py",
         "python3 tests/test_goal_guard.py",
         "python3 scripts/validate_plugin_package.py --root .",
         "node --test pi-extension/test/extension.test.js",
-        "python3 scripts/install_adapter.py codex --target",
-        "hook UserPromptSubmit",
-        "hook PreToolUse",
-        "hook Stop",
-        "python3 scripts/loop_verify.py",
     ):
-        assert phrase in text
+        assert phrase not in workflow_text
+    for phrase in ("scripts/lint_python.py", "tests/test_goal_guard.py", "scripts/validate_plugin_package.py"):
+        assert phrase in verify_text
+
+
+def test_ci_workflow_uses_current_official_actions():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+
+    assert "actions/checkout@v6" in workflow_text
+    assert "actions/setup-python@v6" in workflow_text
+    assert "actions/setup-node@v6" in workflow_text
+    assert 'node-version: "24"' in workflow_text
 
 
 def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
@@ -2013,9 +2020,8 @@ def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
     assert "pull_request:" in workflow_text
     assert "strategy:" in workflow_text
     assert "matrix:" in workflow_text
-    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow_text
+    assert 'python-version: ["3.10", "3.12", "3.14"]' in workflow_text
     assert "python-version: ${{ matrix.python-version }}" in workflow_text
-    assert "python3 scripts/lint_python.py" in workflow_text
     assert "scripts/lint_python.py" in verify_text
 
 
@@ -2034,10 +2040,12 @@ def test_governance_workflow_passes_event_diff_range():
     assert "github.event.pull_request.head.sha || github.sha" in workflow_text
 
 
-def test_ci_workflow_has_loop_cadence_trigger():
+def test_ci_workflow_runs_on_push_and_pull_request_only():
     text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
-    assert "schedule:" in text
-    assert "cron:" in text
+    assert "push:" in text
+    assert "pull_request:" in text
+    assert "schedule:" not in text
+    assert "cron:" not in text
 
 
 def test_repository_content_has_no_private_project_context():

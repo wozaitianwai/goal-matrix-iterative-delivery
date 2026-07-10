@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ LEVELS = {
     "L2": "assisted-with-verifier",
     "L3": "remote-ci-activity",
 }
+LEVEL_ORDER = {level: index for index, level in enumerate(("L0", *LEVELS))}
 
 RUN_LOG_LINE_LIMIT = 500
 STATUS_OUTPUT_CHAR_LIMIT = 40000
@@ -27,6 +29,11 @@ DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
 MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")
 VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+(?:[+.-][A-Za-z0-9.-]+)?\b")
+STATE_GOAL_STATUS_RE = re.compile(
+    r"(?:\bG\d+\b[^\n]*\b(?:active|pending|in progress)\b|"
+    r"\b(?:active|pending|in progress)\b[^\n]*\bG\d+\b)",
+    re.IGNORECASE,
+)
 
 
 def has_phrases(root, rel, phrases):
@@ -35,6 +42,17 @@ def has_phrases(root, rel, phrases):
         return False
     text = path.read_text(encoding="utf-8", errors="ignore")
     return all(phrase in text for phrase in phrases)
+
+
+def state_goal_status_claims(root):
+    path = root / "STATE.md"
+    if not path.is_file():
+        return []
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        if STATE_GOAL_STATUS_RE.search(line)
+    ]
 
 
 def has_github_remote(root):
@@ -106,6 +124,26 @@ def remote_run_evidence(root):
         "currentHead": bool(current_head and current_head in evidence_heads),
         "currentHeadSha": current_head,
         "evidenceHeadShas": sorted(set(evidence_heads)),
+    }
+
+
+def github_actions_evidence(root):
+    current_head = git_head(root)
+    head_sha = os.environ.get("GITHUB_SHA", "")
+    metadata = {
+        "runId": os.environ.get("GITHUB_RUN_ID", ""),
+        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+        "workflow": os.environ.get("GITHUB_WORKFLOW", ""),
+    }
+    present = os.environ.get("GITHUB_ACTIONS", "").lower() == "true" and bool(
+        head_sha and all(metadata.values())
+    )
+    return {
+        "present": present,
+        "currentHead": bool(present and current_head and head_sha == current_head),
+        "currentHeadSha": current_head,
+        "headSha": head_sha,
+        **metadata,
     }
 
 
@@ -254,8 +292,11 @@ def audit(root):
     signals["githubRemote"] = has_github_remote(root)
     signals["githubWorkflows"] = (root / ".github" / "workflows").is_dir()
     remote_evidence = remote_run_evidence(root)
-    signals["remoteRunEvidence"] = remote_evidence["present"]
-    signals["remoteRunEvidenceCurrentHead"] = remote_evidence["currentHead"]
+    ci_evidence = github_actions_evidence(root)
+    signals["remoteCiContext"] = ci_evidence["present"]
+    signals["remoteCiContextCurrentHead"] = ci_evidence["currentHead"]
+    signals["remoteRunEvidence"] = remote_evidence["present"] or ci_evidence["present"]
+    signals["remoteRunEvidenceCurrentHead"] = remote_evidence["currentHead"] or ci_evidence["currentHead"]
     signals["repeatedRunEvidence"] = has_repeated_run_evidence(root)
     run_log_lines = run_log_line_count(root)
     signals["runLogNeedsSummary"] = run_log_lines > RUN_LOG_LINE_LIMIT
@@ -280,6 +321,8 @@ def audit(root):
     signals["stateVersionDrift"] = bool(stale_state_versions) or (
         bool(repo_versions["package"] and repo_versions["plugin"]) and repo_versions["package"] != repo_versions["plugin"]
     )
+    state_goal_claims = state_goal_status_claims(root)
+    signals["stateGoalStatusClaim"] = bool(state_goal_claims)
 
     score = 10
     score += 18 if signals["stateFile"] else 0
@@ -335,6 +378,9 @@ def audit(root):
     if signals["stateVersionDrift"]:
         blocked.append("STATE.md mentions stale plugin version or package/plugin versions diverge.")
         recommendations.append("Update STATE.md plugin cache/version readback after package or plugin version changes.")
+    if signals["stateGoalStatusClaim"]:
+        blocked.append("STATE.md claims machine goal status; .goal-matrix/state.json is the goal-state truth source.")
+        recommendations.append("Keep STATE.md human-only and remove active or pending G-number claims.")
     if signals["frictionBudgetExceeded"]:
         blocked.append("Loop friction budget exceeded; slim status or hook output before adding more loop surface.")
         recommendations.append("Prefer compact status or quieter hooks before adding new lifecycle machinery.")
@@ -367,10 +413,12 @@ def audit(root):
         "stateGovernanceApprovalEnv": state_approval_env,
         "stateGovernanceMachineValues": state_machine_values,
         "stateVersionMentions": state_versions,
+        "stateGoalStatusClaims": state_goal_claims,
         "repoVersions": repo_versions,
         "governanceApprovalEnv": policy_approval_env,
         "frictionBudget": friction,
         "remoteRunEvidence": remote_evidence,
+        "remoteCiContext": ci_evidence,
         "assessment": assessment,
         "signals": signals,
         "unresolvedGaps": gaps,
@@ -384,6 +432,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--require-level", choices=LEVELS)
     args = parser.parse_args()
 
     result = audit(args.root)
@@ -393,6 +442,11 @@ def main():
         print(f"Loop readiness: {result['level']} ({result['score']}/100)")
         for item in result["recommendations"]:
             print(f"- {item}")
+    if result["signals"]["stateGoalStatusClaim"]:
+        return 4
+    if args.require_level and LEVEL_ORDER[result["level"]] < LEVEL_ORDER[args.require_level]:
+        print(f"required readiness {args.require_level}, got {result['level']}", file=sys.stderr)
+        return 3
     return 0 if result["score"] >= 38 else 2
 
 

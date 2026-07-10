@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.10-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.11-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -584,6 +585,47 @@ def test_package_validator_checks_current_repo():
     assert package["manifest"]["name"] == "goal-matrix-iterative-delivery"
 
 
+def test_package_validator_requires_runtime_closure():
+    required_runtime = (
+        "core/goal_guard.py",
+        "core/goal_verification.py",
+        "core/protocol.md",
+        "core/templates/active-goal.md",
+        "core/templates/checks.md",
+        "core/templates/decisions.md",
+        "core/templates/goal-matrix.md",
+        "core/templates/loop-note.md",
+        "core/templates/notifications.json",
+        "core/templates/project-context.md",
+        "core/templates/project-policy.json",
+        "scripts/check_governance.py",
+        "scripts/lint_python.py",
+        "loop-governance.json",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        package_root = Path(tmp) / "package"
+        shutil.copytree(
+            ROOT,
+            package_root,
+            ignore=shutil.ignore_patterns(".git", ".goal-matrix", "__pycache__", ".pytest_cache"),
+        )
+
+        for rel in required_runtime:
+            path = package_root / rel
+            content = path.read_bytes()
+            path.unlink()
+            result = subprocess.run(
+                [sys.executable, str(PACKAGE_VALIDATOR), "--root", str(package_root)],
+                text=True,
+                capture_output=True,
+                cwd=ROOT,
+            )
+            path.write_bytes(content)
+
+            assert result.returncode == 1, rel
+            assert f"missing file: {rel}" in json.loads(result.stdout)["errors"], rel
+
+
 def test_l1_loop_ready_spine_files_are_committable():
     for path in ("LOOP.md", "STATE.md", "loop-budget.md", "loop-run-log.md", "scripts/loop_audit.py"):
         assert (ROOT / path).is_file(), path
@@ -698,7 +740,8 @@ def test_loop_engineering_gap_register_tracks_unfinished_work():
         "Resolved: keep policy, tests, and verifier output together",
     ):
         assert phrase in loop
-    assert "G28 gap register" in state
+    assert "engineering gap register" in state
+    assert "machine goal status stays in `.goal-matrix/state.json`" in state
 
 
 def test_ci_workflow_runs_loop_engineering_gates():
@@ -949,6 +992,7 @@ def make_governance_repo(root):
         json.dumps(
             {
                 "approvalEnv": "GOAL_MATRIX_APPROVED",
+                "approvalActors": ["trusted-owner"],
                 "approvalRequiredPaths": ["package.json"],
                 "blockedPaths": [".goal-matrix/**"],
                 "publishActionPatterns": ["npm publish"],
@@ -959,6 +1003,7 @@ def make_governance_repo(root):
 
 def test_governance_sensitive_runtime_paths_require_approval():
     policy = json.loads(read_text("loop-governance.json"))
+    assert policy["approvalActors"] == ["wozaitianwai"]
     required = [
         ".codex-plugin/plugin.json",
         ".github/workflows/**",
@@ -1028,8 +1073,12 @@ def test_governance_blocks_approval_required_paths_without_approval():
     assert approved.returncode == 0, approved.stderr
 
 
-def test_governance_committed_approval_trailer_allows_clean_commit():
-    env_without_approval = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+def test_governance_local_approval_trailer_does_not_approve_clean_commit():
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         make_governance_repo(root)
@@ -1062,11 +1111,182 @@ def test_governance_committed_approval_trailer_allows_clean_commit():
             env=env_without_approval,
         )
 
+    assert result.returncode == 1
+    assert "package.json requires approval" in result.stderr
+
+
+def test_governance_approval_trailer_rejects_untrusted_ci_actor():
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "untrusted attestation",
+                "-m",
+                "Goal-Matrix-Approval: G159 governance evidence",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env={**env_without_approval, "GITHUB_ACTIONS": "true", "GITHUB_ACTOR": "contributor"},
+        )
+
+    assert result.returncode == 1
+    assert "package.json requires approval" in result.stderr
+
+
+def test_governance_approval_trailer_allows_configured_ci_actor():
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "trusted attestation",
+                "-m",
+                "Goal-Matrix-Approval: G159 governance evidence",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(GOVERNANCE_CHECK), "--root", str(root)],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env={**env_without_approval, "GITHUB_ACTIONS": "true", "GITHUB_ACTOR": "trusted-owner"},
+        )
+
     assert result.returncode == 0, result.stderr
 
 
+def test_governance_explicit_range_catches_sensitive_earlier_commit():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+        write_file(root / "package.json", "{}\n")
+        subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "baseline"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        write_file(root / "package.json", '{"sensitive": true}\n')
+        subprocess.run(["git", "add", "package.json"], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "sensitive"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        write_file(root / "README.md", "ordinary final commit\n")
+        subprocess.run(["git", "add", "README.md"], cwd=root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "ordinary"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(GOVERNANCE_CHECK),
+                "--root",
+                str(root),
+                "--base",
+                base,
+                "--head",
+                head,
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 1
+    assert "package.json requires approval" in result.stderr
+
+
+def test_governance_invalid_explicit_range_fails_closed():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_governance_repo(root)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(GOVERNANCE_CHECK),
+                "--root",
+                str(root),
+                "--base",
+                "missing-base",
+                "--head",
+                "HEAD",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 2
+    assert "invalid governance diff range" in result.stderr
+
+
 def test_governance_committed_approval_trailer_does_not_approve_worktree_changes():
-    env_without_approval = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         make_governance_repo(root)
@@ -1138,7 +1358,12 @@ def test_loop_verify_keeps_approval_env_out_of_non_governance_checks():
         "import json, scripts.loop_verify as loop_verify; "
         "print(json.dumps({"
         "'tests': loop_verify.command_env('tests').get('GOAL_MATRIX_APPROVED'), "
-        "'governance': loop_verify.command_env('governance').get('GOAL_MATRIX_APPROVED')"
+        "'governance': loop_verify.command_env('governance').get('GOAL_MATRIX_APPROVED'), "
+        "'tests_base': loop_verify.command_env('tests').get('GOAL_MATRIX_BASE_SHA'), "
+        "'governance_base': loop_verify.command_env('governance').get('GOAL_MATRIX_BASE_SHA'), "
+        "'tests_github': loop_verify.command_env('tests').get('GITHUB_ACTIONS'), "
+        "'audit_github': loop_verify.command_env('loop audit').get('GITHUB_ACTIONS'), "
+        "'governance_github': loop_verify.command_env('governance').get('GITHUB_ACTIONS')"
         "}))"
     )
     result = subprocess.run(
@@ -1146,12 +1371,25 @@ def test_loop_verify_keeps_approval_env_out_of_non_governance_checks():
         text=True,
         capture_output=True,
         cwd=ROOT,
-        env={**os.environ, "GOAL_MATRIX_APPROVED": "1"},
+        env={
+            **os.environ,
+            "GOAL_MATRIX_APPROVED": "1",
+            "GOAL_MATRIX_BASE_SHA": "base",
+            "GITHUB_ACTIONS": "true",
+        },
     )
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload == {"tests": None, "governance": "1"}
+    assert payload == {
+        "tests": None,
+        "governance": "1",
+        "tests_base": None,
+        "governance_base": "base",
+        "tests_github": None,
+        "audit_github": "true",
+        "governance_github": "true",
+    }
 
 
 def test_governance_blocks_publish_actions_without_approval():
@@ -1437,6 +1675,132 @@ remote-ci-activity
     assert fresh_audit["level"] == "L3"
 
 
+def make_l3_context_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://example.invalid/repo.git"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    write_file(root / "STATE.md", "Last run: now\n\n## High Priority\n\n## Watch List\n")
+    write_file(root / "loop-budget.md", "Max tokens: 100\nKill Switch: stop\n")
+    write_file(
+        root / "LOOP.md",
+        """# Loop
+
+## Active Loops
+package-triage
+
+## Loop Engineering Completion Matrix
+## Readiness Levels
+remote-ci-activity
+
+## Human Gates
+## Budget
+""",
+    )
+    write_file(
+        root / "loop-run-log.md",
+        (
+            '# Runs\n\n## Recent Runs\n'
+            '{"pattern":"github-check-run","outcome":"remote-ci-readback",'
+            '"run_status":"completed","run_conclusion":"success",'
+            '"run_url":"https://example.invalid/run","head_sha":"stale"}\n'
+        ),
+    )
+    write_file(
+        root / "adapters" / "codex" / "skills" / "loop-verifier" / "SKILL.md",
+        "independent verifier\ntruth source\nreject completion\n",
+    )
+    write_file(root / ".github" / "workflows" / "audit.yml", "name: audit\n")
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "base"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_loop_audit_l3_required_rejects_stale_evidence():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_l3_context_repo(root)
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json", "--require-level", "L3"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+    assert result.returncode == 3
+    assert json.loads(result.stdout)["level"] == "L2"
+    assert "required readiness L3, got L2" in result.stderr
+
+
+def test_loop_audit_github_actions_current_head_satisfies_l3():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        head = make_l3_context_repo(root)
+        env = {
+            **{key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")},
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_SHA": head,
+            "GITHUB_RUN_ID": "12345",
+            "GITHUB_REPOSITORY": "example/repo",
+            "GITHUB_WORKFLOW": "Loop Readiness Audit",
+        }
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json", "--require-level", "L3"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+        )
+
+    assert result.returncode == 0, result.stderr
+    audit = json.loads(result.stdout)
+    assert audit["level"] == "L3"
+    assert audit["signals"]["remoteCiContextCurrentHead"] is True
+    assert audit["signals"]["remoteRunEvidenceCurrentHead"] is True
+
+
+def test_loop_audit_rejects_state_goal_status_claim():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_l3_context_repo(root)
+        write_file(
+            root / "STATE.md",
+            "Last run: now (G999 active)\n\n## High Priority\n\n## Watch List\n",
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(LOOP_AUDIT), "--root", str(root), "--json"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+        )
+
+    assert result.returncode == 4
+    audit = json.loads(result.stdout)
+    assert audit["signals"]["stateGoalStatusClaim"] is True
+    assert any("STATE.md claims machine goal status" in item for item in audit["blocked"])
+
+
 def test_loop_audit_detects_remote_from_linked_worktree():
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "repo"
@@ -1558,6 +1922,21 @@ def test_ci_workflow_has_pr_gate_python_matrix_and_lint():
     assert "python-version: ${{ matrix.python-version }}" in workflow_text
     assert "python3 scripts/lint_python.py" in workflow_text
     assert "scripts/lint_python.py" in verify_text
+
+
+def test_ci_workflow_l3_required_gate():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+
+    assert "python3 scripts/loop_verify.py --require-level L3" in workflow_text
+
+
+def test_governance_workflow_passes_event_diff_range():
+    workflow_text = (ROOT / ".github" / "workflows" / "loop-audit.yml").read_text(encoding="utf-8")
+
+    assert "GOAL_MATRIX_BASE_SHA" in workflow_text
+    assert "github.event.pull_request.base.sha || github.event.before" in workflow_text
+    assert "GOAL_MATRIX_HEAD_SHA" in workflow_text
+    assert "github.event.pull_request.head.sha || github.sha" in workflow_text
 
 
 def test_ci_workflow_has_loop_cadence_trigger():
@@ -2619,6 +2998,49 @@ def test_policy_gate_blocks_approval_required_paths_without_approval():
     assert approved.returncode == 0, approved.stderr
 
 
+def test_policy_gate_dotfile_paths_keep_leading_dot():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=[".env", ".env.*"])
+
+        env_file = run_guard(
+            ["policy-gate", "--root", str(root), "--hook", "--debug"],
+            json.dumps({"tool_input": {"path": ".env"}}),
+        )
+        env_local = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"path": "./.env.local"}}),
+        )
+
+    assert env_file.returncode == 1
+    assert json.loads(env_file.stdout)["paths"] == [".env"]
+    assert ".env requires approval" in env_file.stderr
+    assert env_local.returncode == 1
+    assert ".env.local requires approval" in env_local.stderr
+
+
+def test_policy_gate_shell_literal_path_requires_approval_and_documents_dynamic_boundary():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=[".env"])
+        payload = json.dumps({"tool_input": {"cmd": "sed -i s/old/new/ .env"}})
+
+        denied = run_guard(["policy-gate", "--root", str(root), "--hook", "--debug"], payload)
+        approved = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            payload,
+            env={**os.environ, "GOAL_MATRIX_APPROVED": "1"},
+        )
+
+    threat_model = read_text("docs/threat-model.md")
+    assert denied.returncode == 1
+    assert json.loads(denied.stdout)["paths"] == [".env"]
+    assert ".env requires approval" in denied.stderr
+    assert approved.returncode == 0, approved.stderr
+    assert "literal shell path tokens" in threat_model
+    assert "dynamic shell expansion" in threat_model
+
+
 def test_policy_gate_rejects_unscoped_payload_approval():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -3456,6 +3878,48 @@ def test_audit_rejects_visible_goal_matrix_drift_from_state_json():
     assert "goal matrix drift: G1 userOutcome differs from state.json" in result.stderr
 
 
+def test_state_json_remains_authoritative_across_checkpoint():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "JSON truth").returncode == 0
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        matrix_path.write_text(
+            matrix_path.read_text(encoding="utf-8").replace("JSON truth", "Edited by hand"),
+            encoding="utf-8",
+        )
+
+        checkpoint = run_guard(["checkpoint", "--root", tmp, "--", sys.executable, "-c", "print('ok')"])
+        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        matrix_text = matrix_path.read_text(encoding="utf-8")
+
+    assert checkpoint.returncode == 0, checkpoint.stderr
+    assert state["goalMatrix"]["childGoals"][0]["userOutcome"] == "JSON truth"
+    assert state["goalMatrix"]["childGoals"][0]["status"] == "Done"
+    assert "| G1 | JSON truth |" in matrix_text
+    assert "Edited by hand" not in matrix_text
+
+
+def test_audit_rejects_missing_pending_projection_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "Required pending row").returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+""",
+        )
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "goal matrix drift: required goal G1 is missing from Markdown projection" in result.stderr
+
+
 def test_checkpoint_preserves_extended_matrix_fields():
     prompt = "剩余 backlog:\nP1 first item\nP2 second item\n"
     with tempfile.TemporaryDirectory() as tmp:
@@ -3522,6 +3986,7 @@ def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
         assert run_guard(["start", "--root", tmp], "ship real loop step").returncode == 0
+        verify_command = [sys.executable, "-c", "print('verified proof')"]
 
         verified = run_guard(
             [
@@ -3529,12 +3994,11 @@ def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
                 "--root",
                 tmp,
                 "--",
-                sys.executable,
-                "-c",
-                "print('verified proof')",
+                *verify_command,
             ]
         )
         status_result = run_guard(["status", "--root", tmp])
+        audit_result = run_guard(["audit", "--root", tmp])
         evidence_path = Path(tmp) / ".goal-matrix" / "evidence" / "G1.log"
         evidence_exists = evidence_path.is_file()
         evidence = evidence_path.read_text(encoding="utf-8") if evidence_exists else ""
@@ -3549,7 +4013,10 @@ def test_checkpoint_command_marks_active_goal_done_after_machine_verification():
     status = json.loads(status_result.stdout)
     assert status["activeGoal"] is None
     assert status["goalMatrix"]["pending"] == 0
-    assert status["goalMatrix"]["childGoals"][0]["status"] == "Done"
+    completed = status["goalMatrix"]["childGoals"][0]
+    assert completed["status"] == "Done"
+    assert completed["verification"] == f"`{shlex.join(verify_command)}`"
+    assert audit_result.returncode == 0, audit_result.stderr
 
 
 def test_checkpoint_command_promotes_next_pending_goal_for_self_evolution_run():

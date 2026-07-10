@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.11-codex.1 - 2026-07-10
+
+- Publish the governance remediation: JSON-owned goal state and generated Markdown projection, current-head L3 CI enforcement, actor-scoped complete-range governance, and package runtime-closure validation under plugin version `0.1.11+codex.20260710005049`.
+- Add fail-closed explicit governance ranges, checkpoint verification writeback, and hermetic verifier tests so release evidence cannot be bypassed by stale metadata or runner environment leakage.
+- Pin Codex plugin marketplace install instructions to `v0.1.11-codex.1`.
+
 ## v0.1.10-codex.1 - 2026-07-09
 
 - Publish committed `Goal-Matrix-Approval:` trailer support so remote CI can verify governance-approved release commits without embedding local approval env in the workflow, under plugin version `0.1.10+codex.20260709231027`.

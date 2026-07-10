@@ -131,6 +131,7 @@ MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 ALLOW_FRAGMENTED_PUSH_ENV = "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH"
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
+UNSET = object()
 
 LOOP_CONTEXT = """Loop engineering:
 - Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
@@ -702,8 +703,15 @@ def audit_visible_goal_matrix_drift(root):
     if not state_goals:
         return []
     state_by_id = {goal.get("id"): goal for goal in state_goals if goal.get("id")}
+    visible_goals = read_goal_matrix_markdown(root)
+    visible_ids = {goal.get("id") for goal in visible_goals if goal.get("id")}
+    active_id = active_goal_id(read_active_goal(root))
     problems = []
-    for visible in read_goal_matrix_markdown(root):
+    for goal in state_goals:
+        goal_id = goal.get("id")
+        if goal_id and (goal.get("status", "").lower() != "done" or goal_id == active_id) and goal_id not in visible_ids:
+            problems.append(f"goal matrix drift: required goal {goal_id} is missing from Markdown projection")
+    for visible in visible_goals:
         goal_id = visible.get("id")
         state_goal = state_by_id.get(goal_id)
         if not state_goal:
@@ -772,22 +780,6 @@ def status_goal_matrix_summary(root, goals, active_goal):
         summary["visible"] = len(visible)
         summary["archived"] = len(goals) - len(visible)
     return summary
-
-
-def merge_state_goals(root):
-    state_goals = read_goal_matrix(root)
-    markdown_goals = read_goal_matrix_markdown(root)
-    if not state_goals:
-        return markdown_goals
-    markdown_by_id = {goal.get("id"): goal for goal in markdown_goals if goal.get("id")}
-    merged = []
-    seen = set()
-    for goal in state_goals:
-        goal_id = goal.get("id")
-        merged.append(markdown_by_id.get(goal_id, goal))
-        seen.add(goal_id)
-    merged.extend(goal for goal in markdown_goals if goal.get("id") not in seen)
-    return merged
 
 
 def has_pending_active_goal(goals, active_goal):
@@ -892,10 +884,10 @@ def status_payload(root):
     }
 
 
-def write_state_json(root, goals=None, active_goal=None):
+def write_state_json(root, goals=None, active_goal=UNSET):
     root = Path(root)
-    active_goal = read_active_goal_markdown(root) if active_goal is None else active_goal
-    goals = merge_state_goals(root) if goals is None else goals
+    active_goal = read_active_goal(root) if active_goal is UNSET else active_goal
+    goals = read_goal_matrix(root) if goals is None else goals
     path = root / ".goal-matrix" / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -939,43 +931,6 @@ EXTENDED_GOAL_MATRIX_HEADER = (
 EXTENDED_GOAL_MATRIX_SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 
 
-def goal_matrix_text_with_header(text, extended=False):
-    header = EXTENDED_GOAL_MATRIX_HEADER if extended else GOAL_MATRIX_HEADER
-    separator = EXTENDED_GOAL_MATRIX_SEPARATOR if extended else GOAL_MATRIX_SEPARATOR
-    if GOAL_MATRIX_HEADER not in text and EXTENDED_GOAL_MATRIX_HEADER not in text:
-        return f"# Goal Matrix\n\n{header}\n{separator}\n"
-    if extended and EXTENDED_GOAL_MATRIX_HEADER not in text:
-        text = text.replace(GOAL_MATRIX_HEADER, EXTENDED_GOAL_MATRIX_HEADER, 1)
-        text = text.replace(GOAL_MATRIX_SEPARATOR, EXTENDED_GOAL_MATRIX_SEPARATOR, 1)
-    return text
-
-
-def append_goal_matrix_row(
-    path,
-    goal_id,
-    title,
-    engineering_slice="Start one bounded child goal",
-    truth_source="`.goal-matrix` status",
-    verification="`python3 core/goal_guard.py status --root .`",
-    dependencies=None,
-    risk=None,
-    parallel_safety=None,
-):
-    text = path.read_text(encoding="utf-8") if path.is_file() else "# Goal Matrix\n\n"
-    extended = dependencies is not None or risk is not None or parallel_safety is not None
-    text = goal_matrix_text_with_header(text, extended)
-    placeholder = "| G0 | Initialize project governance | Create `.goal-matrix` baseline | Policy/docs | Audit passes | Pending |"
-    text = "\n".join(line for line in text.splitlines() if line.strip() != placeholder) + "\n"
-    if not text.endswith("\n"):
-        text += "\n"
-    cells = [goal_id, title, engineering_slice, truth_source, verification]
-    if extended:
-        cells.extend([dependencies or "none", risk or "medium", parallel_safety or "main thread only"])
-    cells.append("Pending")
-    text += markdown_table_row(cells) + "\n"
-    path.write_text(text, encoding="utf-8")
-
-
 def render_goal_matrix(goals, title="Goal Matrix"):
     extended = any(
         any(goal.get(field) for field in ("dependencies", "risk", "parallelSafety"))
@@ -1003,6 +958,25 @@ def render_goal_matrix(goals, title="Goal Matrix"):
         cells.append(goal.get("status", "Pending"))
         lines.append(markdown_table_row(cells))
     return "\n".join(lines) + "\n"
+
+
+def write_goal_matrix_projection(root, goals, active_goal, include_ids=()):
+    path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
+    existing_ids = {goal.get("id") for goal in read_goal_matrix_markdown(root) if goal.get("id")}
+    required_ids = set(include_ids)
+    active_id = active_goal_id(active_goal)
+    visible = []
+    for goal in goals:
+        goal_id = goal.get("id")
+        if (
+            goal_id in existing_ids
+            or goal_id in required_ids
+            or goal.get("status", "").lower() != "done"
+            or goal_id == active_id
+        ):
+            visible.append(goal)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_goal_matrix(visible), encoding="utf-8")
 
 
 def prune_project(root, keep_done):
@@ -1144,7 +1118,11 @@ def start_project(root, prompt):
         return 1
     goals_dir = root / ".goal-matrix" / "goals"
     goals_dir.mkdir(parents=True, exist_ok=True)
-    goals = read_goal_matrix(root)
+    goals = [
+        goal
+        for goal in read_goal_matrix(root)
+        if not (goal.get("id") == "G0" and goal.get("userOutcome") == "Initialize project governance")
+    ]
     active_goal = read_active_goal(root)
     if has_pending_active_goal(goals, active_goal):
         print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
@@ -1174,31 +1152,35 @@ def start_project(root, prompt):
             else "subagent dispatch and child implementation"
         )
         active_goal = f"{goal_id} - {scheduler_title}"
-        append_goal_matrix_row(
-            goals_dir / "goal-matrix.md",
-            goal_id,
-            scheduler_title,
-            scheduler_slice,
-            "start command status readback",
-            "`python3 core/goal_guard.py audit --root .`",
-            "none",
-            "medium",
-            "main thread only",
+        goals.append(
+            {
+                "id": goal_id,
+                "userOutcome": scheduler_title,
+                "engineeringSlice": scheduler_slice,
+                "truthSource": "start command status readback",
+                "verification": "`python3 core/goal_guard.py audit --root .`",
+                "dependencies": "none",
+                "risk": "medium",
+                "parallelSafety": "main thread only",
+                "status": "Pending",
+            }
         )
         planned = []
         for index, item in enumerate(items, start=1):
             child_id = goal_id_after(goal_id, index)
             planned.append(child_id)
-            append_goal_matrix_row(
-                goals_dir / "goal-matrix.md",
-                child_id,
-                item["title"],
-                item.get("engineering_slice", f"Subagent candidate: {item['title']}"),
-                item.get("truth_source", "item-specific truth source"),
-                item.get("verification", "item-specific verification"),
-                goal_id,
-                item["risk"],
-                "independent if touched paths do not overlap",
+            goals.append(
+                {
+                    "id": child_id,
+                    "userOutcome": item["title"],
+                    "engineeringSlice": item.get("engineering_slice", f"Subagent candidate: {item['title']}"),
+                    "truthSource": item.get("truth_source", "item-specific truth source"),
+                    "verification": item.get("verification", "item-specific verification"),
+                    "dependencies": goal_id,
+                    "risk": item["risk"],
+                    "parallelSafety": "independent if touched paths do not overlap",
+                    "status": "Pending",
+                }
             )
         (goals_dir / "active-goal.md").write_text(
             f"""# Active Goal
@@ -1215,14 +1197,24 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
             encoding="utf-8",
         )
-        write_state_json(root)
+        write_state_json(root, goals=goals, active_goal=active_goal)
+        write_goal_matrix_projection(root, goals, active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
         return 0
 
     title = first_prompt_line(prompt)
     active_goal = f"{goal_id} - {title}"
 
-    append_goal_matrix_row(goals_dir / "goal-matrix.md", goal_id, title)
+    goals.append(
+        {
+            "id": goal_id,
+            "userOutcome": title,
+            "engineeringSlice": "Start one bounded child goal",
+            "truthSource": "`.goal-matrix` status",
+            "verification": "`python3 core/goal_guard.py status --root .`",
+            "status": "Pending",
+        }
+    )
     (goals_dir / "active-goal.md").write_text(
         f"""# Active Goal
 
@@ -1238,7 +1230,8 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 """,
         encoding="utf-8",
     )
-    write_state_json(root)
+    write_state_json(root, goals=goals, active_goal=active_goal)
+    write_goal_matrix_projection(root, goals, active_goal)
     print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
     return 0
 
@@ -1279,19 +1272,6 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     )
 
 
-def mark_goal_done(root, goal_id):
-    path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    updated = []
-    for line in lines:
-        cells = split_markdown_table_row(line)
-        if len(cells) >= 6 and cells[0] == goal_id:
-            cells[8 if len(cells) >= 9 else 5] = "Done"
-            line = markdown_table_row(cells)
-        updated.append(line)
-    path.write_text("\n".join(updated) + "\n", encoding="utf-8")
-
-
 def checkpoint_project(root, verify_command, if_active=False):
     root = Path(root)
     if not verify_command:
@@ -1316,16 +1296,23 @@ def checkpoint_project(root, verify_command, if_active=False):
         return result.returncode
 
     goal_id = active_goal_id(active_goal)
+    goals = [dict(goal) for goal in read_goal_matrix(root)]
+    completed = next((goal for goal in goals if goal.get("id") == goal_id), None)
+    if not completed:
+        print(f"active goal {goal_id} is missing from state.json", file=sys.stderr)
+        return 1
     evidence_path = write_checkpoint_evidence(root, goal_id, active_goal, verify_command, result)
-    mark_goal_done(root, goal_id)
-    next_goal = first_pending_goal(read_goal_matrix_markdown(root))
+    completed["verification"] = f"`{shlex.join(map(str, verify_command))}`"
+    completed["status"] = "Done"
+    next_goal = first_pending_goal(goals)
     next_active_goal = None
     if next_goal:
         next_active_goal = active_goal_title(next_goal)
         write_active_goal_from_goal(root, next_goal)
     else:
         write_active_goal_none(root)
-    write_state_json(root)
+    write_state_json(root, goals=goals, active_goal=next_active_goal)
+    write_goal_matrix_projection(root, goals, next_active_goal, include_ids=(goal_id,))
     print(
         json.dumps(
             {
@@ -1497,7 +1484,7 @@ def normalize_policy_path(root, value):
             return path.resolve().relative_to(Path(root).resolve()).as_posix()
         except ValueError:
             return path.as_posix()
-    return path.as_posix().lstrip("./")
+    return path.as_posix()
 
 
 def collect_payload_paths(raw, root):
@@ -1605,6 +1592,32 @@ def policy_path_matches(path, patterns):
     )
 
 
+def command_literal_policy_paths(command, root, patterns):
+    if not patterns:
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;<>()")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    paths = set()
+    for token in tokens:
+        path = normalize_policy_path(root, token)
+        if path and policy_path_matches(path, patterns):
+            paths.add(path)
+    return sorted(paths)
+
+
+def payload_policy_paths(root, raw, policy):
+    patterns = [*policy.get("immutablePaths", []), *policy.get("approvalRequiredPaths", [])]
+    paths = set(collect_payload_paths(raw, root))
+    for command in collect_payload_commands(raw):
+        paths.update(command_literal_policy_paths(command, root, patterns))
+    return sorted(paths)
+
+
 def protected_command_matches(command, protected):
     command_lower = command.lower()
     protected_lower = protected.lower().strip()
@@ -1623,7 +1636,7 @@ def policy_gate_problems(root, raw):
 
     env_approved = truthy_env(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV))
     problems = []
-    paths = collect_payload_paths(raw, root)
+    paths = payload_policy_paths(root, raw, policy)
     for path in paths:
         if policy_path_matches(path, policy.get("immutablePaths", [])):
             problems.append(f"immutable path: {path}")
@@ -1643,7 +1656,8 @@ def policy_gate_problems(root, raw):
 
 
 def policy_gate_debug(root, raw):
-    return {"paths": collect_payload_paths(raw, root), "commands": collect_payload_commands(raw)}
+    policy = read_project_policy(root)
+    return {"paths": payload_policy_paths(root, raw, policy), "commands": collect_payload_commands(raw)}
 
 
 def policy_gate(root, hook_mode=False, debug=False):

@@ -4,20 +4,23 @@ Goal Matrix Iterative Delivery is a Codex lifecycle adapter and workflow guardra
 
 ## What It Enforces
 
-- `PreToolUse` runs `policy-gate` before normal tool execution. It can block tool payloads that target `.goal-matrix/project-policy.json` `immutablePaths`, require `GOAL_MATRIX_APPROVED` or a scoped payload approval for `approvalRequiredPaths`, and block configured `protectedCommands`.
+- `PreToolUse` runs `policy-gate` before normal tool execution. It checks structured path fields, patch file headers, and literal shell path tokens against `.goal-matrix/project-policy.json`; it can block `immutablePaths`, require `GOAL_MATRIX_APPROVED` or a scoped payload approval for `approvalRequiredPaths`, and block configured `protectedCommands`.
 - `policy-gate --debug` prints the paths and commands recognized from a hook payload so fixture updates can be checked against the real parser surface.
 - `PreToolUse` runs `publish-gate` before `git push` and before commands matching `.goal-matrix/project-policy.json` `publishActionPatterns`. It checks upstream state, local ahead/behind count, clean worktree state, open active goal state, and current checkpoint evidence.
 - `Stop` preserves the review gate exit code. A failed review gate blocks the lifecycle hook instead of being swallowed by `exit 0`.
 - `checkpoint` rejects metadata-only proof such as `goal_guard.py status` and records verification output under `.goal-matrix/evidence/`.
 - The optional native `pre-push` hook runs the same `publish-gate` for shell pushes and chains an existing hook from `.git/hooks/pre-push.goal-matrix.previous`.
+- Repository governance checks the complete CI event `base..head` range when those refs are provided. A `Goal-Matrix-Approval` trailer is accepted only in GitHub Actions when `GITHUB_ACTOR` is listed in `loop-governance.json`; local operators must use the explicit approval environment override.
 
 ## What It Does Not Enforce
 
 - It does not prevent a user or process from disabling hooks, editing files outside Codex, changing git history, or bypassing the optional native hook.
 - It does not create the visible Codex sidebar goal by itself; the agent still has to call `create_goal`.
 - It does not sandbox shell commands, filesystem writes, network access, secrets, package scripts, or third-party tools.
+- It cannot resolve dynamic shell expansion, variables, command substitution, or paths assembled by a program at runtime. Those require host sandboxing, filesystem permissions, or post-change review.
 - It does not prove product correctness. Verification commands must still be chosen to test the actual code, docs, API, database, log, browser, or release behavior.
 - It does not replace repository permissions, branch protection, CI protection, secret scanning, code review, or deployment approval.
+- Actor-scoped commit trailers are CI attestations, not cryptographic authorization. Repository permissions and protected environments remain the trust boundary.
 
 ## Fail-Open Boundaries
 

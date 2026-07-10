@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import os
 import subprocess
@@ -13,7 +14,6 @@ ENV = {"PYTHONPYCACHEPREFIX": str(CACHE_ROOT)}
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 
 CHECKS = (
-    ("loop audit", [sys.executable, "scripts/loop_audit.py", "--root", ".", "--json"]),
     ("package validation", [sys.executable, "scripts/validate_plugin_package.py", "--root", "."]),
     ("pi-extension tests", ["node", "--test", "pi-extension/test/extension.test.js"]),
     ("python lint", [sys.executable, "scripts/lint_python.py"]),
@@ -39,6 +39,13 @@ CHECKS = (
 )
 
 
+def checks(require_level=None):
+    audit_command = [sys.executable, "scripts/loop_audit.py", "--root", ".", "--json"]
+    if require_level:
+        audit_command.extend(("--require-level", require_level))
+    return (("loop audit", audit_command), *CHECKS)
+
+
 def approval_env_name():
     try:
         policy = json.loads((ROOT / "loop-governance.json").read_text(encoding="utf-8"))
@@ -51,11 +58,20 @@ def command_env(name):
     env = {**os.environ, **ENV}
     if name != "governance":
         env.pop(approval_env_name(), None)
+        env.pop("GOAL_MATRIX_BASE_SHA", None)
+        env.pop("GOAL_MATRIX_HEAD_SHA", None)
+    if name == "tests":
+        for key in tuple(env):
+            if key.startswith("GITHUB_"):
+                env.pop(key)
     return env
 
 
-def main():
-    for name, command in CHECKS:
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--require-level", choices=("L1", "L2", "L3"))
+    args = parser.parse_args(argv)
+    for name, command in checks(args.require_level):
         print(f"==> {name}", flush=True)
         result = subprocess.run(command, cwd=ROOT, env=command_env(name))
         if result.returncode:

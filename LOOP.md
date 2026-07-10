@@ -6,7 +6,7 @@ This repository keeps one manual package-triage loop for plugin readiness.
 
 | Pattern | Cadence | Status | Prompt |
 | --- | --- | --- | --- |
-| package-triage | manual or daily | L3 remote-ci-activity | Run `python3 scripts/loop_audit.py --root . --json`; update `STATE.md`; verifier must reject completion without evidence. |
+| package-triage | manual or daily | L2 local / L3 remote-enforced | Run `python3 scripts/loop_audit.py --root . --json`; update `STATE.md`; remote verifier must require `L3 remote-ci-activity`. |
 
 ## Loop Engineering Completion Matrix
 
@@ -18,13 +18,13 @@ G23-G36 are Done: readiness matrix, verifier skill, workflow checks, remote CI e
 | --- | --- | --- |
 | L1 | report-only | state file, loop config, budget, run log, triage prompt |
 | L2 | assisted-with-verifier | L1 plus completion matrix and packaged independent verifier |
-| L3 | remote-ci-activity | L2 plus GitHub remote, workflow checks, and remote CI readback evidence |
+| L3 | remote-ci-activity | L2 plus GitHub remote, workflow checks, and either matching current-run CI context or completed current-head readback evidence |
 
 ## Engineering Gap Register
 
 | Gap | Current state | Missing for loop-engineering parity | Next action |
 | --- | --- | --- | --- |
-| remote-ci | GitHub Actions readback exists | None for L3 remote CI evidence | Resolved: keep run URL/status in `loop-run-log.md` |
+| remote-ci | GitHub Actions current-run context or readback exists | None for L3 remote CI evidence | Resolved: keep run URL/status in `loop-run-log.md`; CI runs `loop_verify.py --require-level L3` against its checked-out SHA. |
 | maker-checker | Branch/worktree verifier path exists | None for maker-checker separation evidence | Resolved: keep branch/worktree/verifier evidence in `loop-run-log.md` |
 | run-evidence | `loop-run-log.md` has repeated timestamped runs with outcomes and audit signal `repeatedRunEvidence=true` | None for repeated local run evidence | Resolved: keep two or more JSON-line run records with outcomes |
 | distribution | Pushed source validates and installs from release source | None for pushed-source distribution verification | Resolved: keep clone/install/doctor evidence in `loop-run-log.md` |
@@ -47,7 +47,8 @@ G23-G36 are Done: readiness matrix, verifier skill, workflow checks, remote CI e
 
 ## Observability
 
-- `STATE.md` is the current state spine.
+- `STATE.md` records human operational notes and must not claim an active or pending G-number status.
+- `.goal-matrix/state.json` is the machine goal-state truth source.
 - `loop-run-log.md` records every loop run.
 - `loop-budget.md` records cost limits and pause rules.
 

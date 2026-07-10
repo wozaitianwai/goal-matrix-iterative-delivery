@@ -717,6 +717,7 @@ def test_package_validator_checks_current_repo():
 def test_package_validator_requires_runtime_closure():
     required_runtime = (
         "core/goal_guard.py",
+        "core/goal_gate.py",
         "core/goal_native_hook.py",
         "core/goal_policy.py",
         "core/goal_projection.py",
@@ -966,6 +967,10 @@ def test_loop_audit_reports_current_friction_budget():
         root = Path(tmp)
         (root / "core").mkdir()
         write_file(root / "core" / "goal_guard.py", GUARD.read_text(encoding="utf-8"))
+        write_file(
+            root / "core" / "goal_gate.py",
+            (ROOT / "core" / "goal_gate.py").read_text(encoding="utf-8"),
+        )
         write_file(
             root / "core" / "goal_verification.py",
             (ROOT / "core" / "goal_verification.py").read_text(encoding="utf-8"),
@@ -4290,6 +4295,27 @@ def test_state_helpers_are_in_subdomain_module():
         assert signature not in guard
     for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
         assert "core/goal_state.py" in read_text(path)
+
+
+def test_gate_helpers_are_in_subdomain_module():
+    gate_path = ROOT / "core" / "goal_gate.py"
+    spec = importlib.util.spec_from_file_location("goal_gate", gate_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(gate_path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    assert callable(module.audit_project)
+    assert callable(module.completion_gate)
+    assert any("missing completion evidence" in problem for problem in module.audit("Done"))
+
+    guard = read_text("core/goal_guard.py")
+    for signature in ("def audit_project(", "def completion_gate(", "def gate_decision("):
+        assert signature not in guard
+    for path in ("scripts/validate_plugin_package.py", "scripts/loop_verify.py"):
+        assert "core/goal_gate.py" in read_text(path)
 
 
 def test_audit_rejects_visible_goal_matrix_drift_from_state_json():

@@ -24,6 +24,7 @@ CHECKS = (
             "-m",
             "py_compile",
             "scripts/lint_python.py",
+            "core/goal_gate.py",
             "core/goal_guard.py",
             "core/goal_native_hook.py",
             "core/goal_policy.py",

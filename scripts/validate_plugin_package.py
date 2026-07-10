@@ -17,6 +17,7 @@ ADAPTERS = {
 ASSETS = (
     "package.json",
     "assets/icon.png",
+    "core/goal_gate.py",
     "core/goal_guard.py",
     "core/goal_native_hook.py",
     "core/goal_policy.py",

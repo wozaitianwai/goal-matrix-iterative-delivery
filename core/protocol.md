@@ -129,7 +129,7 @@ Every engineering pass is a closed loop:
 project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
 ```
 
-Use small local checkpoint commits after verified child goals and preserve them as reviewable evidence. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push`; the gate requires a clean worktree, closed active goal, checkpoint evidence, an upstream, and no unintegrated remote commits, but does not impose a local commit-count limit.
+Use small local checkpoint commits after verified child goals and preserve them as reviewable evidence. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push`; the gate requires a clean worktree, closed active goal, checkpoint evidence, an upstream or remote-default integration base, and no unintegrated remote commits, but does not impose a local commit-count limit.
 
 Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
 

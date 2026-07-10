@@ -51,6 +51,12 @@ def git_ref_exists(root, ref):
     return git_output(root, "rev-parse", "--verify", "--quiet", ref).returncode == 0
 
 
+def remote_default_ref(root):
+    result = git_output(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    ref = result.stdout.strip() if result.returncode == 0 else ""
+    return ref if ref and git_ref_exists(root, ref) else ""
+
+
 def publish_base_ref(root, branch):
     upstream = git_output(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if upstream.returncode == 0 and upstream.stdout.strip():
@@ -58,7 +64,7 @@ def publish_base_ref(root, branch):
     candidate = f"origin/{branch}" if branch else ""
     if candidate and git_ref_exists(root, candidate):
         return candidate
-    return ""
+    return remote_default_ref(root)
 
 
 def hook_payload_text(raw):
@@ -166,7 +172,7 @@ def publish_gate(root, hook_mode=False, goals=None, active_goal="", publish_patt
     branch = current_branch(root)
     base_ref = publish_base_ref(root, branch)
     if not base_ref:
-        print("publish gate blocked: missing upstream; set upstream before push", file=sys.stderr)
+        print("publish gate blocked: missing upstream or remote default integration base", file=sys.stderr)
         return 1
 
     counts = git_output(root, "rev-list", "--left-right", "--count", f"HEAD...{base_ref}")

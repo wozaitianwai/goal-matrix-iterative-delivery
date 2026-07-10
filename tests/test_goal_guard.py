@@ -3554,6 +3554,44 @@ def test_publish_gate_rejects_missing_upstream():
     assert "missing upstream" in result.stderr
 
 
+def test_publish_gate_accepts_first_feature_branch_push_against_remote_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = make_publish_repo(Path(tmp))
+        subprocess.run(["git", "remote", "set-head", "origin", "--auto"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-c", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+        git_commit(repo, "feature.txt", "feature\n", "feature")
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_publish_gate_rejects_first_feature_branch_push_behind_remote_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        repo = make_publish_repo(root)
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(["git", "remote", "set-head", "origin", "--auto"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "switch", "-c", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+        other = root / "other"
+        subprocess.run(
+            ["git", "clone", "--branch", branch, str(root / "remote.git"), str(other)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        git_commit(other, "remote.txt", "remote\n", "remote")
+        subprocess.run(["git", "push", "origin", branch], cwd=other, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, check=True, capture_output=True, text=True)
+
+        result = run_guard(["publish-gate", "--root", str(repo)])
+
+    assert result.returncode == 1
+    assert "remote history not integrated" in result.stderr
+
+
 def test_publish_gate_rejects_behind_upstream():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

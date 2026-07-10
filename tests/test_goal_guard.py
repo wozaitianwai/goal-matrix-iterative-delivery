@@ -2455,6 +2455,73 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     assert second_text == "two"
 
 
+def test_active_verify_uses_state_json_instead_of_edited_markdown():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "Verify JSON contract").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_goal = state["goalMatrix"]["childGoals"][0]
+        state_goal["verification"] = shlex.join(
+            [sys.executable, "-c", "from pathlib import Path; Path('state-source').write_text('ok')"]
+        )
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Verify JSON contract
+Initialization type: iteration
+Policy impact: none
+Touched paths: markdown-source
+Delivery boundary: edited boundary
+Skipped: none
+Truth source: markdown-source
+Verification: {sys.executable} -c "from pathlib import Path; Path('markdown-source').write_text('wrong')"
+Development flow: inspect -> verify
+""",
+        )
+
+        result = run_guard(["active-verify", "--root", tmp])
+
+        assert result.returncode == 0, result.stderr
+        assert (root / "state-source").read_text(encoding="utf-8") == "ok"
+        assert not (root / "markdown-source").exists()
+
+
+def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "JSON boundary").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_goal = state["goalMatrix"]["childGoals"][0]
+        state_goal.update(
+            {
+                "deliveryBoundary": "state boundary",
+                "truthSource": "state truth",
+                "verification": "python3 --version",
+            }
+        )
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        write_file(active_path, active_path.read_text(encoding="utf-8").replace(
+            "Delivery boundary: one bounded child goal from the current prompt",
+            "Delivery boundary: edited by hand",
+        ))
+
+        audit = run_guard(["audit", "--root", tmp])
+        status = run_guard(["status", "--root", tmp])
+
+        assert audit.returncode == 1
+        assert "active goal projection drift" in audit.stderr
+        payload = json.loads(status.stdout)
+        assert payload["nextAction"]["deliveryBoundary"] == "state boundary"
+        assert payload["nextAction"]["truthSource"] == "state truth"
+
+
 def test_stop_hook_preserves_completion_gate_failure():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]

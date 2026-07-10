@@ -486,6 +486,7 @@ def audit_project(root):
                 problems.append(f"project policy missing completion requirement: {item}")
 
     problems.extend(audit_visible_goal_matrix_drift(root))
+    problems.extend(audit_active_goal_projection_drift(root))
     problems.extend(audit_visible_done_goal_verification(root))
 
     return problems
@@ -689,6 +690,53 @@ def read_goal_matrix(root):
     return read_goal_matrix_markdown(root)
 
 
+def state_goal_matrix_available(root):
+    matrix = load_state_json(root).get("goalMatrix")
+    return isinstance(matrix, dict) and isinstance(matrix.get("childGoals"), list)
+
+
+def active_goal_projection(goal=None):
+    if goal is None:
+        return """# Active Goal
+
+Active goal: none
+Initialization type: iteration
+Policy impact: none
+Touched paths: none
+Delivery boundary: no active goal
+Skipped: none
+Truth source: `.goal-matrix` status
+Verification: python3 core/goal_guard.py status --root .
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+"""
+    return f"""# Active Goal
+
+Active goal: {goal['id']} - {goal['userOutcome']}
+Initialization type: {goal.get('initializationType', 'iteration')}
+Policy impact: {goal.get('policyImpact', 'none')}
+Touched paths: {goal.get('touchedPaths', 'TBD')}
+Delivery boundary: {goal.get('deliveryBoundary', goal.get('engineeringSlice', ''))}
+Skipped: {goal.get('skipped', 'other pending goals')}
+Truth source: {goal.get('truthSource', '')}
+Verification: {normalized_verification(goal.get('verification', ''))}
+Development flow: {goal.get('developmentFlow', 'inspect -> failing check -> implement -> verify -> checkpoint')}
+"""
+
+
+def audit_active_goal_projection_drift(root):
+    if not state_goal_matrix_available(root):
+        return []
+    state = load_state_json(root)
+    active_id = active_goal_id(state.get("activeGoal"))
+    goal = next((item for item in read_goal_matrix(root) if item.get("id") == active_id), None) if active_id else None
+    if active_id and not goal:
+        return [f"active goal projection drift: {active_id} is missing from state.json"]
+    path = Path(root) / ".goal-matrix" / "goals" / "active-goal.md"
+    if path.is_file() and path.read_text(encoding="utf-8") != active_goal_projection(goal):
+        return ["active goal projection drift: active-goal.md differs from state.json"]
+    return []
+
+
 def audit_visible_done_goal_verification(root):
     problems = []
     for goal in read_goal_matrix_markdown(root):
@@ -837,9 +885,14 @@ def next_action_payload(root, goals, active_goal):
     active_id = active_goal_id(active_goal)
     active = next((goal for goal in goals if goal["id"] == active_id), None)
     if active and active["status"].lower() == "pending":
-        verification = normalized_verification(read_active_goal_value(root, "Verification") or active.get("verification", ""))
-        boundary = read_active_goal_value(root, "Delivery boundary")
-        truth_source = read_active_goal_value(root, "Truth source") or active.get("truthSource", "")
+        if state_goal_matrix_available(root):
+            verification = normalized_verification(active.get("verification", ""))
+            boundary = active.get("deliveryBoundary", active.get("engineeringSlice", ""))
+            truth_source = active.get("truthSource", "")
+        else:
+            verification = normalized_verification(read_active_goal_value(root, "Verification") or active.get("verification", ""))
+            boundary = read_active_goal_value(root, "Delivery boundary") or active.get("engineeringSlice", "")
+            truth_source = read_active_goal_value(root, "Truth source") or active.get("truthSource", "")
         title = active_goal_title(active)
         return {
             "type": "continue_active_goal",
@@ -989,7 +1042,9 @@ def prune_project(root, keep_done):
     policy_only_problems = [
         problem
         for problem in problems
-        if not problem.startswith("Done goal ") and not problem.startswith("goal matrix drift: ")
+        if not problem.startswith("Done goal ")
+        and not problem.startswith("goal matrix drift: ")
+        and not problem.startswith("active goal projection drift:")
     ]
     if policy_only_problems:
         for problem in policy_only_problems:
@@ -1015,6 +1070,8 @@ def prune_project(root, keep_done):
     goals_dir.mkdir(parents=True, exist_ok=True)
     (goals_dir / "goal-matrix.md").write_text(render_goal_matrix(visible), encoding="utf-8")
     (goals_dir / "archive.md").write_text(render_goal_matrix(archived, "Goal Matrix Archive"), encoding="utf-8")
+    active = next((goal for goal in goals if goal.get("id") == active_id), None) if active_id else None
+    (goals_dir / "active-goal.md").write_text(active_goal_projection(active), encoding="utf-8")
     write_state_json(root, goals=goals, active_goal=active_goal)
     print(
         json.dumps(
@@ -1153,19 +1210,24 @@ def start_project(root, prompt):
             else "subagent dispatch and child implementation"
         )
         active_goal = f"{goal_id} - {scheduler_title}"
-        goals.append(
-            {
-                "id": goal_id,
-                "userOutcome": scheduler_title,
-                "engineeringSlice": scheduler_slice,
-                "truthSource": "start command status readback",
-                "verification": "`python3 core/goal_guard.py audit --root .`",
-                "dependencies": "none",
-                "risk": "medium",
-                "parallelSafety": "main thread only",
-                "status": "Pending",
-            }
-        )
+        scheduler_goal = {
+            "id": goal_id,
+            "userOutcome": scheduler_title,
+            "engineeringSlice": scheduler_slice,
+            "truthSource": "start command status readback",
+            "verification": "`python3 core/goal_guard.py audit --root .`",
+            "initializationType": "iteration",
+            "policyImpact": "none",
+            "touchedPaths": ".goal-matrix/goals/goal-matrix.md, .goal-matrix/goals/active-goal.md",
+            "deliveryBoundary": boundary,
+            "skipped": skipped,
+            "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+            "dependencies": "none",
+            "risk": "medium",
+            "parallelSafety": "main thread only",
+            "status": "Pending",
+        }
+        goals.append(scheduler_goal)
         planned = []
         for index, item in enumerate(items, start=1):
             child_id = goal_id_after(goal_id, index)
@@ -1183,21 +1245,7 @@ def start_project(root, prompt):
                     "status": "Pending",
                 }
             )
-        (goals_dir / "active-goal.md").write_text(
-            f"""# Active Goal
-
-Active goal: {active_goal}
-Initialization type: iteration
-Policy impact: none
-Touched paths: .goal-matrix/goals/goal-matrix.md, .goal-matrix/goals/active-goal.md
-Delivery boundary: {boundary}
-Skipped: {skipped}
-Truth source: `.goal-matrix` status
-Verification: python3 core/goal_guard.py audit --root .
-Development flow: inspect -> failing check -> implement -> verify -> checkpoint
-""",
-            encoding="utf-8",
-        )
+        write_active_goal_from_goal(root, scheduler_goal)
         write_state_json(root, goals=goals, active_goal=active_goal)
         write_goal_matrix_projection(root, goals, active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
@@ -1206,31 +1254,22 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     title = first_prompt_line(prompt)
     active_goal = f"{goal_id} - {title}"
 
-    goals.append(
-        {
-            "id": goal_id,
-            "userOutcome": title,
-            "engineeringSlice": "Start one bounded child goal",
-            "truthSource": "`.goal-matrix` status",
-            "verification": "`python3 core/goal_guard.py status --root .`",
-            "status": "Pending",
-        }
-    )
-    (goals_dir / "active-goal.md").write_text(
-        f"""# Active Goal
-
-Active goal: {active_goal}
-Initialization type: iteration
-Policy impact: none
-Touched paths: TBD
-Delivery boundary: one bounded child goal from the current prompt
-Skipped: unrelated work
-Truth source: `.goal-matrix` status
-Verification: python3 core/goal_guard.py status --root .
-Development flow: inspect -> failing check -> implement -> verify -> checkpoint
-""",
-        encoding="utf-8",
-    )
+    goal = {
+        "id": goal_id,
+        "userOutcome": title,
+        "engineeringSlice": "Start one bounded child goal",
+        "truthSource": "`.goal-matrix` status",
+        "verification": "`python3 core/goal_guard.py status --root .`",
+        "initializationType": "iteration",
+        "policyImpact": "none",
+        "touchedPaths": "TBD",
+        "deliveryBoundary": "one bounded child goal from the current prompt",
+        "skipped": "unrelated work",
+        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
+        "status": "Pending",
+    }
+    goals.append(goal)
+    write_active_goal_from_goal(root, goal)
     write_state_json(root, goals=goals, active_goal=active_goal)
     write_goal_matrix_projection(root, goals, active_goal)
     print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
@@ -1239,36 +1278,14 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 
 def write_active_goal_none(root):
     (Path(root) / ".goal-matrix" / "goals" / "active-goal.md").write_text(
-        """# Active Goal
-
-Active goal: none
-Initialization type: iteration
-Policy impact: none
-Touched paths: none
-Delivery boundary: no active goal
-Skipped: none
-Truth source: `.goal-matrix` status
-Verification: python3 core/goal_guard.py status --root .
-Development flow: inspect -> failing check -> implement -> verify -> checkpoint
-""",
+        active_goal_projection(),
         encoding="utf-8",
     )
 
 
 def write_active_goal_from_goal(root, goal):
     (Path(root) / ".goal-matrix" / "goals" / "active-goal.md").write_text(
-        f"""# Active Goal
-
-Active goal: {active_goal_title(goal)}
-Initialization type: iteration
-Policy impact: none
-Touched paths: TBD
-Delivery boundary: {goal['engineeringSlice']}
-Skipped: other pending goals
-Truth source: {goal['truthSource']}
-Verification: {goal['verification']}
-Development flow: inspect -> failing check -> implement -> verify -> checkpoint
-""",
+        active_goal_projection(goal),
         encoding="utf-8",
     )
 
@@ -1340,7 +1357,12 @@ def active_verify(root):
             return 0
         print("active verification blocked: no active goal", file=sys.stderr)
         return 1
-    verification = read_active_goal_value(root, "Verification")
+    if state_goal_matrix_available(root):
+        active_id = active_goal_id(read_active_goal(root))
+        goal = next((item for item in read_goal_matrix(root) if item.get("id") == active_id), None)
+        verification = normalized_verification(goal.get("verification", "")) if goal else ""
+    else:
+        verification = read_active_goal_value(root, "Verification")
     if not verification:
         print("active verification blocked: missing Verification field", file=sys.stderr)
         return 1

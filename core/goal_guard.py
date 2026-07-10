@@ -1855,6 +1855,32 @@ def publish_gate(root, hook_mode=False):
     return 1 if problems else 0
 
 
+def completion_gate(root):
+    root = Path(root)
+    if not (root / ".goal-matrix" / "project-policy.json").is_file():
+        return 0
+
+    problems = audit_project(root)
+    active_goal = read_active_goal(root)
+    pending_goals = [goal for goal in read_goal_matrix(root) if goal.get("status", "").lower() != "done"]
+    if active_goal:
+        problems.append(f"active goal still open: {active_goal}; run checkpoint explicitly")
+    elif pending_goals:
+        problems.append(f"pending goal remains: {pending_goals[0].get('id', 'unknown')}")
+
+    dirty = git_output(root, "status", "--porcelain")
+    if dirty.returncode == 0 and dirty.stdout.strip() and not active_goal:
+        note = gate_input(root, None).lower()
+        focused = re.search(r"^focused verification:\s*\S", note, re.MULTILINE)
+        verified = re.search(r"^verified with:\s*\S", note, re.MULTILINE)
+        if not (focused and verified):
+            problems.append("Fast Lane requires focused verification evidence")
+
+    for problem in dict.fromkeys(problems):
+        print(f"completion gate blocked: {problem}", file=sys.stderr)
+    return 1 if problems else 0
+
+
 def emit_gate(next_step, reason):
     print(json.dumps({"next": next_step, "reason": reason}, ensure_ascii=False, indent=2))
     return 0 if next_step == "checkpoint" else 1
@@ -2032,6 +2058,8 @@ def main():
     publish_gate_parser = sub.add_parser("publish-gate")
     publish_gate_parser.add_argument("--root", default=".")
     publish_gate_parser.add_argument("--hook", action="store_true")
+    completion_gate_parser = sub.add_parser("completion-gate")
+    completion_gate_parser.add_argument("--root", default=".")
     policy_gate_parser = sub.add_parser("policy-gate")
     policy_gate_parser.add_argument("--root", default=".")
     policy_gate_parser.add_argument("--hook", action="store_true")
@@ -2063,6 +2091,8 @@ def main():
         return doctor_project(args.root, args.fix)
     if args.cmd == "publish-gate":
         return publish_gate(args.root, args.hook)
+    if args.cmd == "completion-gate":
+        return completion_gate(args.root)
     if args.cmd == "policy-gate":
         return policy_gate(args.root, args.hook, args.debug)
     if args.cmd == "gate":

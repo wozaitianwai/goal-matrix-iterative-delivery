@@ -2355,9 +2355,9 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
     assert " hook PreToolUse" in pre_tool_command
-    assert " checkpoint --if-active --root . --" not in stop_command
-    assert " gate --phase review_gate --root . --verify" in stop_command
-    assert " active-verify --root ." in stop_command
+    assert " completion-gate --root ." in stop_command
+    assert " --verify" not in stop_command
+    assert " active-verify" not in stop_command
     assert "scripts/loop_verify.py" not in stop_command
     assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
     assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
@@ -2434,7 +2434,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     assert second_text == "two"
 
 
-def test_stop_hook_preserves_review_gate_failure():
+def test_stop_hook_preserves_completion_gate_failure():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -2447,7 +2447,7 @@ def test_stop_hook_preserves_review_gate_failure():
         write_file(
             plugin_root / "core" / "goal_guard.py",
             "import pathlib, sys\n"
-            "if 'gate' in sys.argv:\n"
+            "if 'completion-gate' in sys.argv:\n"
             "    raise SystemExit(7)\n"
             "if sys.argv[-2:] == ['hook', 'Stop']:\n"
             f"    pathlib.Path({str(marker)!r}).write_text('called')\n",
@@ -2468,6 +2468,46 @@ def test_stop_hook_preserves_review_gate_failure():
         assert not marker.exists()
 
 
+def test_stop_hook_never_executes_active_goal_verification():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        marker = root / "stop-side-effect"
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], "Unsafe verification").returncode == 0
+        write_file(
+            root / ".goal-matrix" / "goals" / "active-goal.md",
+            f"""# Active Goal
+
+Active goal: G1 - Unsafe verification
+Initialization type: iteration
+Policy impact: none
+Touched paths: stop-side-effect
+Delivery boundary: Stop must not execute this command
+Skipped: none
+Truth source: stop-side-effect
+Verification: {sys.executable} -c "from pathlib import Path; Path('stop-side-effect').write_text('executed')"
+Development flow: inspect -> failing check -> implement -> verify -> checkpoint
+""",
+        )
+        write_file(root / ".goal-matrix" / "loop-note.md", "Reviewer: approved\n")
+
+        result = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="",
+            text=True,
+            capture_output=True,
+            cwd=root,
+            env={**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)},
+        )
+
+        assert not marker.exists()
+        assert result.returncode != 0
+        assert "checkpoint" in result.stderr.lower()
+
+
 def test_stop_hook_allows_no_active_goal():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
@@ -2475,10 +2515,9 @@ def test_stop_hook_allows_no_active_goal():
     with tempfile.TemporaryDirectory() as tmp:
         project_root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        write_file(
-            project_root / ".goal-matrix" / "goals" / "active-goal.md",
-            "Active goal: none\n",
-        )
+        assert run_guard(["start", "--root", tmp], "Finish loop").returncode == 0
+        verify = [sys.executable, "-c", "raise SystemExit(0)"]
+        assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
 
         env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(

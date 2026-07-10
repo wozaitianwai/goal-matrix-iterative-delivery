@@ -21,7 +21,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.12-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.13-codex.1"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -1162,6 +1162,63 @@ def make_governance_repo(root):
     )
 
 
+def make_governance_merge_repo(root, approval_trailer):
+    make_governance_repo(root)
+    subprocess.run(["git", "add", "loop-governance.json"], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "policy"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(["git", "switch", "-c", "feature"], cwd=root, check=True, capture_output=True, text=True)
+    write_file(root / "package.json", '{"sensitive": true}\n')
+    subprocess.run(["git", "add", "package.json"], cwd=root, check=True, capture_output=True, text=True)
+    commit = [
+        "git",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "sensitive",
+    ]
+    if approval_trailer:
+        commit.extend(["-m", approval_trailer])
+    subprocess.run(commit, cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "switch", branch], cwd=root, check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "merge",
+            "--no-ff",
+            "feature",
+            "-m",
+            "Merge pull request",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    return base, head
+
+
 def test_governance_sensitive_runtime_paths_require_approval():
     policy = json.loads(read_text("loop-governance.json"))
     assert policy["approvalActors"] == ["wozaitianwai"]
@@ -1357,6 +1414,70 @@ def test_governance_approval_trailer_allows_configured_ci_actor():
         )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_governance_accepts_approved_tip_behind_standard_merge_commit():
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        base, head = make_governance_merge_repo(
+            root,
+            "Goal-Matrix-Approval: G188 trusted merge evidence",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(GOVERNANCE_CHECK),
+                "--root",
+                str(root),
+                "--base",
+                base,
+                "--head",
+                head,
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env={**env_without_approval, "GITHUB_ACTIONS": "true", "GITHUB_ACTOR": "trusted-owner"},
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_governance_rejects_unapproved_tip_behind_standard_merge_commit():
+    env_without_approval = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "GOAL_MATRIX_APPROVED" and not key.startswith("GITHUB_")
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        base, head = make_governance_merge_repo(root, "")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(GOVERNANCE_CHECK),
+                "--root",
+                str(root),
+                "--base",
+                base,
+                "--head",
+                head,
+            ],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env={**env_without_approval, "GITHUB_ACTIONS": "true", "GITHUB_ACTOR": "trusted-owner"},
+        )
+
+    assert result.returncode == 1
+    assert "package.json requires approval" in result.stderr
 
 
 def test_governance_explicit_range_catches_sensitive_earlier_commit():

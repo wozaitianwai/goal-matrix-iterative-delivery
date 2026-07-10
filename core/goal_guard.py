@@ -129,7 +129,6 @@ LOOP_STAGES = (
 PLUGIN_NAME = "goal-matrix-iterative-delivery"
 MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
-ALLOW_FRAGMENTED_PUSH_ENV = "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH"
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 UNSET = object()
 
@@ -137,7 +136,7 @@ LOOP_CONTEXT = """Loop engineering:
 - Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
 - self-evolution run: keep one active child goal at a time, then continue with the next pending goal after each verified checkpoint; stop only at budget, blocker, or no pending goal.
 - checkpoint commit: make small local commits only after a verified child goal.
-- push policy: before push, squash or merge fragmented local commits into readable history unless the user asks to preserve them.
+- push policy: preserve verified checkpoint commits; publish only from a clean, integrated branch with closed goals and checkpoint evidence.
 - final push requires final verification evidence and a clear branch/history state.
 """
 
@@ -147,7 +146,7 @@ PHASE_BOUNDARIES = {
     "execute": "one active goal only; inspect -> failing check -> minimal change -> verify.",
     "verify": "run the named truth-source check before claiming progress.",
     "checkpoint": "commit only verified child-goal work and keep the next goal explicit.",
-    "history": "squash or merge fragmented commits before push unless the user says to preserve them.",
+    "history": "keep verified checkpoint history readable and publish only from a clean, integrated branch.",
 }
 
 EVENT_CONTEXTS = {
@@ -238,7 +237,7 @@ Lifecycle CLI:
 - goal_guard.py status: read initialization, active goal, next loop, and loop stages.
 - goal_guard.py gate: return design, execute, checkpoint, or blocked from gate evidence.
 - goal_guard.py policy-gate: reject tool calls that violate project policy.
-- goal_guard.py publish-gate: reject publish actions with fragmented local history.
+- goal_guard.py publish-gate: reject publish actions when worktree, goal state, evidence, or upstream integration is not ready.
 - goal_guard.py audit: validate policy, required docs, active-goal fields, and completion evidence.
 """
 
@@ -431,13 +430,10 @@ def audit(text):
         problems.append("UI-only evidence is insufficient: verify against API/DB/log/test truth source")
 
     push_claim = re.search(r"\b(push|pushed|pushing)\b|推送", lowered)
-    history_evidence = re.search(r"squash|merge|consolidat|合并|压缩", lowered)
     final_verification = re.search(
         r"final verification|verified with|最终验证|最终验收|验证.*(通过|pass)",
         lowered,
     )
-    if push_claim and not history_evidence:
-        problems.append("missing push history consolidation: squash or merge fragmented commits before push")
     if push_claim and not final_verification:
         problems.append("missing final verification before push")
 
@@ -1964,18 +1960,11 @@ def publish_gate(root, hook_mode=False):
     if counts.returncode:
         print("publish gate blocked: cannot compare local history with upstream", file=sys.stderr)
         return 1
-    ahead_text, behind_text = counts.stdout.split()[:2]
-    ahead = int(ahead_text)
+    _, behind_text = counts.stdout.split()[:2]
     behind = int(behind_text)
     problems = publish_state_problems(root)
     if behind:
         problems.append(f"remote history not integrated: {behind} commit(s) behind {base_ref}")
-    if ahead > 1 and not truthy_env(ALLOW_FRAGMENTED_PUSH_ENV):
-        problems.append(
-            f"fragmented history: {ahead} commits ahead of {base_ref}; "
-            f"squash or merge before push, or set {ALLOW_FRAGMENTED_PUSH_ENV}=1"
-        )
-
     for problem in problems:
         print(f"publish gate blocked: {problem}", file=sys.stderr)
     return 1 if problems else 0

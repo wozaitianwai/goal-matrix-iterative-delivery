@@ -129,7 +129,7 @@ Every engineering pass is a closed loop:
 project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
 ```
 
-Use small local checkpoint commits after verified child goals. Before pushing, squash or merge fragmented local commits into readable history unless the user asks to preserve every checkpoint. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push` so this policy can fail closed.
+Use small local checkpoint commits after verified child goals and preserve them as reviewable evidence. Hook-capable hosts must run `goal_guard.py publish-gate` before `git push`; the gate requires a clean worktree, closed active goal, checkpoint evidence, an upstream, and no unintegrated remote commits, but does not impose a local commit-count limit.
 
 Keep `loop-run-log.md` bounded. When `scripts/loop_audit.py` reports `runLogNeedsSummary`, run a summary/pruning child goal before continuing long-loop work.
 
@@ -155,9 +155,9 @@ Hook-capable hosts should wire the same loop with thin lifecycle hooks:
 | --- | --- |
 | `SessionStart` | Show project initialization status and loop policy. |
 | `UserPromptSubmit` | Classify the prompt as `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`; do not run `start` or write `.goal-matrix` state by default. UserPromptSubmit 不会运行 `start`。 |
-| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block `git push` when publish history is fragmented. |
+| `PreToolUse` | Permit one loop step only after active goal and policy boundary are known; block publish actions when worktree, goal state, evidence, or upstream integration is not ready. |
 | `PostToolUse` | Tie tool output back to the active goal truth source or next step. |
-| `Stop` | Require verification, checkpoint/status evidence, and push history policy before completion. |
+| `Stop` | Require verification, checkpoint/status evidence, and publish readiness policy before completion. |
 
 Unclear drafts require a `Clarity decision:` note before execution. A loop may expose only one `Active goal:` at a time.
 

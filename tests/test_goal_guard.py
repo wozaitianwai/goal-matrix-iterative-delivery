@@ -525,6 +525,7 @@ def test_install_adapter_can_install_native_pre_push_hook():
         hook_is_executable = os.access(hook, os.X_OK)
         git_commit(target, "one.txt", "one\n", "one")
         git_commit(target, "two.txt", "two\n", "two")
+        write_file(target / "dirty.txt", "dirty\n")
         hook_result = subprocess.run([str(hook)], cwd=target, text=True, capture_output=True)
 
     assert result.returncode == 0, result.stderr
@@ -532,7 +533,7 @@ def test_install_adapter_can_install_native_pre_push_hook():
     assert hook_is_executable
     assert "goal_guard.py\" publish-gate --root \"$repo_root\"" in hook_text
     assert hook_result.returncode == 1
-    assert "fragmented history" in hook_result.stderr
+    assert "uncommitted changes" in hook_result.stderr
 
 
 def test_install_adapter_chains_existing_native_pre_push_hook():
@@ -2229,7 +2230,8 @@ def test_user_prompt_submit_injects_loop_engineering_commit_policy():
     context = hook_context(json.loads(result.stdout))
     assert "Loop engineering" in context
     assert "checkpoint commit" in context
-    assert "squash or merge" in context
+    assert "preserve verified checkpoint commits" in context
+    assert "clean, integrated branch" in context
     assert "push" in context
 
 
@@ -2366,6 +2368,7 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
         publish_root = make_publish_repo(Path(tmp) / "publish")
         git_commit(publish_root, "one.txt", "one\n", "one")
         git_commit(publish_root, "two.txt", "two\n", "two")
+        write_file(publish_root / "dirty.txt", "dirty\n")
         publish = run_guard(
             ["publish-gate", "--root", str(publish_root), "--hook"],
             read_hook_fixture("pre-tool-git-push.json"),
@@ -2388,7 +2391,7 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
     assert unknown.returncode == 0, unknown.stderr
     assert json.loads(unknown.stdout) == {"paths": [], "commands": []}
     assert publish.returncode == 1
-    assert "fragmented history" in publish.stderr
+    assert "uncommitted changes" in publish.stderr
 
 
 def test_policy_gate_debug_reports_paths_and_commands():
@@ -3127,20 +3130,20 @@ def test_audit_accepts_valid_initialized_goal():
     assert result.returncode == 0, result.stderr
 
 
-def test_audit_rejects_push_claim_without_history_consolidation():
-    draft = VALID_INITIALIZED_GOAL + "\nPushed branch to origin.\n"
+def test_audit_rejects_push_claim_without_final_verification():
+    unverified = VALID_INITIALIZED_GOAL.replace(
+        "Completed G1: parser works. Verified with `python3 tests/test_goal_guard.py`. Checkpoint updated.",
+        "Completed G1: parser works. Checkpoint updated.",
+    )
+    draft = unverified + "\nPushed branch to origin.\n"
     result = run_guard(["audit"], draft)
 
     assert result.returncode == 1
-    assert "history consolidation" in result.stderr
+    assert "final verification" in result.stderr
 
 
-def test_audit_accepts_push_claim_with_history_consolidation():
-    draft = (
-        VALID_INITIALIZED_GOAL
-        + "\nHistory consolidated: squash or merge before push.\n"
-        + "Pushed branch to origin after final verification.\n"
-    )
+def test_audit_accepts_push_claim_after_final_verification():
+    draft = VALID_INITIALIZED_GOAL + "\nPushed branch to origin after final verification.\n"
     result = run_guard(["audit"], draft)
 
     assert result.returncode == 0, result.stderr
@@ -3407,7 +3410,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     )
 
 
-def test_publish_gate_rejects_fragmented_history_before_push():
+def test_publish_gate_accepts_multiple_checkpoint_commits():
     with tempfile.TemporaryDirectory() as tmp:
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
@@ -3415,83 +3418,22 @@ def test_publish_gate_rejects_fragmented_history_before_push():
 
         result = run_guard(["publish-gate", "--root", str(repo)])
 
-    assert result.returncode == 1
-    assert "fragmented history" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_only_skips_fragmented_history():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        git_commit(repo, "one.txt", "one\n", "one")
-        git_commit(repo, "two.txt", "two\n", "two")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
     assert result.returncode == 0, result.stderr
 
 
-def test_publish_gate_allow_fragmented_push_still_rejects_dirty_worktree():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        git_commit(repo, "one.txt", "one\n", "one")
-        write_file(repo / "dirty.txt", "dirty\n")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "uncommitted changes" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_active_goal():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        commit_goal_matrix(repo, active_goal="G2 - Still running")
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "active goal" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_missing_checkpoint_evidence():
-    with tempfile.TemporaryDirectory() as tmp:
-        repo = make_publish_repo(Path(tmp))
-        commit_goal_matrix(repo, evidence=False)
-
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
-
-    assert result.returncode == 1
-    assert "missing checkpoint evidence" in result.stderr
-
-
-def test_publish_gate_allow_fragmented_push_still_rejects_missing_upstream():
+def test_publish_gate_rejects_missing_upstream():
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "repo"
         subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
         git_commit(repo, "README.md", "base\n", "base")
 
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
+        result = run_guard(["publish-gate", "--root", str(repo)])
 
     assert result.returncode == 1
     assert "missing upstream" in result.stderr
 
 
-def test_publish_gate_allow_fragmented_push_still_rejects_behind_upstream():
+def test_publish_gate_rejects_behind_upstream():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         repo = make_publish_repo(root)
@@ -3509,10 +3451,7 @@ def test_publish_gate_allow_fragmented_push_still_rejects_behind_upstream():
         subprocess.run(["git", "push", "origin", branch], cwd=other, check=True, capture_output=True, text=True)
         subprocess.run(["git", "fetch", "origin"], cwd=repo, check=True, capture_output=True, text=True)
 
-        result = run_guard(
-            ["publish-gate", "--root", str(repo)],
-            env={**os.environ, "GOAL_MATRIX_ALLOW_FRAGMENTED_PUSH": "1"},
-        )
+        result = run_guard(["publish-gate", "--root", str(repo)])
 
     assert result.returncode == 1
     assert "remote history not integrated" in result.stderr
@@ -3579,7 +3518,7 @@ def test_publish_gate_hook_ignores_non_push_tools():
     assert result.returncode == 0, result.stderr
 
 
-def test_publish_gate_hook_rejects_push_with_fragmented_history():
+def test_publish_gate_hook_accepts_push_with_multiple_commits():
     with tempfile.TemporaryDirectory() as tmp:
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
@@ -3588,8 +3527,7 @@ def test_publish_gate_hook_rejects_push_with_fragmented_history():
 
         result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
-    assert result.returncode == 1
-    assert "fragmented history" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 def test_publish_gate_hook_rejects_push_with_git_global_options():
@@ -3597,12 +3535,13 @@ def test_publish_gate_hook_rejects_push_with_git_global_options():
         repo = make_publish_repo(Path(tmp))
         git_commit(repo, "one.txt", "one\n", "one")
         git_commit(repo, "two.txt", "two\n", "two")
+        write_file(repo / "dirty.txt", "dirty\n")
         payload = json.dumps({"tool_input": {"cmd": "git -C . push origin HEAD"}})
 
         result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
     assert result.returncode == 1
-    assert "fragmented history" in result.stderr
+    assert "uncommitted changes" in result.stderr
 
 
 def test_publish_gate_hook_rejects_publish_action_patterns():
@@ -3623,12 +3562,13 @@ def test_publish_gate_hook_rejects_publish_action_patterns():
             )
             git_commit(repo, "one.txt", "one\n", "one")
             git_commit(repo, "two.txt", "two\n", "two")
+            write_file(repo / "dirty.txt", "dirty\n")
             payload = json.dumps({"tool_input": {"cmd": command}})
 
             result = run_guard(["publish-gate", "--root", str(repo), "--hook"], payload)
 
         assert result.returncode == 1, command
-        assert "fragmented history" in result.stderr
+        assert "uncommitted changes" in result.stderr
 
 
 def test_status_command_reports_active_and_next_loop():

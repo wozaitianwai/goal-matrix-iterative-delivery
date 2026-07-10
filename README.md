@@ -88,7 +88,7 @@ Codex `PreToolUse` runs this gate before `git push` and configured publish comma
 python3 core/goal_guard.py publish-gate --root .
 ```
 
-It fails on dirty worktrees, open active goals, missing checkpoint evidence, missing or behind upstream, or more than one local commit ahead. Squash or merge first unless the user explicitly wants fragmented local commits preserved.
+It fails on dirty worktrees, open active goals, missing checkpoint evidence, missing upstream, or unintegrated remote commits. Verified checkpoint commits are allowed; the gate does not impose a local commit-count limit.
 
 ## Notifications
 

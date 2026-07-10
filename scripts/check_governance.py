@@ -86,7 +86,16 @@ def matches(path, patterns):
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def commit_has_approval_trailer(root, policy, head=None):
+def message_has_approval_trailer(root, ref):
+    message = git_output(root, "log", "-1", "--pretty=%B", ref)
+    for line in message.splitlines():
+        key, _, value = line.partition(":")
+        if f"{key.lower()}:" == COMMIT_APPROVAL_TRAILER and value.strip():
+            return True
+    return False
+
+
+def commit_has_approval_trailer(root, policy, base=None, head=None):
     if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
         return False
     actor = os.environ.get("GITHUB_ACTOR", "").casefold()
@@ -97,12 +106,13 @@ def commit_has_approval_trailer(root, policy, head=None):
         return False
     if not head and has_worktree_changes(root):
         return False
-    message = git_output(root, "log", "-1", "--pretty=%B", head or "HEAD")
-    for line in message.splitlines():
-        key, _, value = line.partition(":")
-        if f"{key.lower()}:" == COMMIT_APPROVAL_TRAILER and value.strip():
-            return True
-    return False
+    head = head or "HEAD"
+    if message_has_approval_trailer(root, head):
+        return True
+    parents = git_lines(root, "rev-list", "--parents", "-n", "1", head)
+    base_sha = git_output(root, "rev-parse", base).strip() if base else ""
+    parts = parents[0].split() if len(parents) == 1 else []
+    return len(parts) == 3 and parts[1] == base_sha and message_has_approval_trailer(root, parts[2])
 
 
 def path_text(root, path, ref=None):
@@ -130,18 +140,18 @@ def package_version_only_bump(root, path, base=None, head=None):
     return manifest.get("version") == version and version in changelog
 
 
-def has_approval(root, policy, head=None):
+def has_approval(root, policy, base=None, head=None):
     value = os.environ.get(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV), "")
     if value.lower() in {"1", "true", "yes", "approved"}:
         return True
-    return commit_has_approval_trailer(root, policy, head)
+    return commit_has_approval_trailer(root, policy, base, head)
 
 
-def approval_source(root, policy, head=None):
+def approval_source(root, policy, base=None, head=None):
     value = os.environ.get(policy.get("approvalEnv", DEFAULT_APPROVAL_ENV), "")
     if value.lower() in {"1", "true", "yes", "approved"}:
         return policy.get("approvalEnv", DEFAULT_APPROVAL_ENV)
-    if commit_has_approval_trailer(root, policy, head):
+    if commit_has_approval_trailer(root, policy, base, head):
         return "trusted GitHub actor plus Goal-Matrix-Approval commit trailer"
     return f"{policy.get('approvalEnv', DEFAULT_APPROVAL_ENV)} or trusted GitHub actor attestation"
 
@@ -179,8 +189,8 @@ def main():
     except GovernanceRangeError as exc:
         print(exc, file=sys.stderr)
         return 2
-    approved = has_approval(root, policy, head)
-    source = approval_source(root, policy, head)
+    approved = has_approval(root, policy, base, head)
+    source = approval_source(root, policy, base, head)
     problems = []
 
     for path in paths:

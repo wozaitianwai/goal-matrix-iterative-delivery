@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.13-codex.1 - 2026-07-10
+
+- Fix post-merge governance approval detection for standard merge commits so the main branch CI gate remains fail-closed without rejecting approved merge evidence.
+- Add regression coverage for approved and unapproved merge commits, then publish the repaired plugin under version `0.1.13+codex.20260710114525`.
+- Pin Codex marketplace installation to `v0.1.13-codex.1`.
+
 ## v0.1.12-codex.1 - 2026-07-10
 
 - Harden hook execution and notification egress, fail closed on invalid policy, and keep structured JSON goal state authoritative over bounded Markdown projections.

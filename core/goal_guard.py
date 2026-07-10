@@ -130,6 +130,7 @@ PLUGIN_NAME = "goal-matrix-iterative-delivery"
 MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
+DEFAULT_KEEP_DONE = 10
 UNSET = object()
 
 LOOP_CONTEXT = """Loop engineering:
@@ -481,7 +482,8 @@ def audit_project(root):
             if item not in completion:
                 problems.append(f"project policy missing completion requirement: {item}")
 
-    problems.extend(audit_visible_goal_matrix_drift(root))
+    problems.extend(audit_projection_config(root))
+    problems.extend(audit_goal_matrix_projection_drift(root))
     problems.extend(audit_active_goal_projection_drift(root))
     problems.extend(audit_active_goal_contract(root))
     problems.extend(audit_visible_done_goal_verification(root))
@@ -656,8 +658,8 @@ def split_markdown_table_row(line):
     return cells
 
 
-def read_goal_matrix_markdown(root):
-    path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
+def read_goal_matrix_markdown(root, filename="goal-matrix.md"):
+    path = Path(root) / ".goal-matrix" / "goals" / filename
     if not path.is_file():
         return []
     goals = []
@@ -790,28 +792,23 @@ def audit_visible_done_goal_verification(root):
     return problems
 
 
-def audit_visible_goal_matrix_drift(root):
-    state_goals = read_goal_matrix(root)
-    if not state_goals:
+def audit_goal_matrix_projection_drift(root):
+    if not state_goal_matrix_available(root):
         return []
-    state_by_id = {goal.get("id"): goal for goal in state_goals if goal.get("id")}
-    visible_goals = read_goal_matrix_markdown(root)
-    visible_ids = {goal.get("id") for goal in visible_goals if goal.get("id")}
-    active_id = active_goal_id(read_active_goal(root))
+    state = load_state_json(root)
+    goals = read_goal_matrix(root)
+    active_goal = state.get("activeGoal")
+    visible, archived = split_goal_projections(goals, active_goal, projection_keep_done(state))
+    goals_dir = Path(root) / ".goal-matrix" / "goals"
     problems = []
-    for goal in state_goals:
-        goal_id = goal.get("id")
-        if goal_id and (goal.get("status", "").lower() != "done" or goal_id == active_id) and goal_id not in visible_ids:
-            problems.append(f"goal matrix drift: required goal {goal_id} is missing from Markdown projection")
-    for visible in visible_goals:
-        goal_id = visible.get("id")
-        state_goal = state_by_id.get(goal_id)
-        if not state_goal:
-            problems.append(f"goal matrix drift: {goal_id} is not in state.json")
-            continue
-        for field in ("userOutcome", "engineeringSlice", "truthSource", "verification", "status"):
-            if visible.get(field, "") != state_goal.get(field, ""):
-                problems.append(f"goal matrix drift: {goal_id} {field} differs from state.json")
+    expected = (
+        ("goal-matrix.md", render_goal_matrix(visible), "goal matrix projection drift"),
+        ("archive.md", render_goal_matrix(archived, "Goal Matrix Archive"), "archive projection drift"),
+    )
+    for filename, projection, label in expected:
+        path = goals_dir / filename
+        if not path.is_file() or path.read_text(encoding="utf-8") != projection:
+            problems.append(f"{label}: {filename} differs from state.json")
     return problems
 
 
@@ -851,23 +848,16 @@ def goal_matrix_summary(goals, active_goal):
 
 
 def visible_status_goals(root, goals, active_goal):
-    visible = read_goal_matrix_markdown(root)
-    if not visible or len(visible) >= len(goals):
+    if not state_goal_matrix_available(root):
         return goals
-    state_ids = {goal.get("id") for goal in goals}
-    visible_ids = {goal.get("id") for goal in visible}
-    required_ids = {
-        goal.get("id")
-        for goal in goals
-        if goal.get("status", "").lower() != "done" or goal.get("id") == active_goal_id(active_goal)
-    }
-    return visible if visible_ids <= state_ids and required_ids <= visible_ids else goals
+    visible, _ = split_goal_projections(goals, active_goal, projection_keep_done(load_state_json(root)))
+    return visible
 
 
 def status_goal_matrix_summary(root, goals, active_goal):
     summary = goal_matrix_summary(goals, active_goal)
     visible = visible_status_goals(root, goals, active_goal)
-    if visible is not goals:
+    if len(visible) < len(goals):
         summary["childGoals"] = visible
         summary["visible"] = len(visible)
         summary["archived"] = len(goals) - len(visible)
@@ -981,10 +971,28 @@ def status_payload(root):
     }
 
 
-def write_state_json(root, goals=None, active_goal=UNSET):
+def projection_keep_done(state):
+    projection = state.get("projection") if isinstance(state, dict) else None
+    keep_done = projection.get("keepDone") if isinstance(projection, dict) else DEFAULT_KEEP_DONE
+    return keep_done if isinstance(keep_done, int) and not isinstance(keep_done, bool) and keep_done >= 0 else DEFAULT_KEEP_DONE
+
+
+def audit_projection_config(root):
+    state = load_state_json(root)
+    if "projection" not in state:
+        return []
+    projection = state.get("projection")
+    keep_done = projection.get("keepDone") if isinstance(projection, dict) else None
+    if not isinstance(keep_done, int) or isinstance(keep_done, bool) or keep_done < 0:
+        return ["invalid state projection: projection.keepDone must be a non-negative integer"]
+    return []
+
+
+def write_state_json(root, goals=None, active_goal=UNSET, keep_done=None):
     root = Path(root)
     active_goal = read_active_goal(root) if active_goal is UNSET else active_goal
     goals = read_goal_matrix(root) if goals is None else goals
+    keep_done = projection_keep_done(load_state_json(root)) if keep_done is None else keep_done
     path = root / ".goal-matrix" / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -996,6 +1004,7 @@ def write_state_json(root, goals=None, active_goal=UNSET):
                 "nextAction": next_action_payload(root, goals, active_goal),
                 "subagentCandidates": subagent_candidates(goals, active_goal),
                 "goalMatrix": goal_matrix_summary(goals, active_goal),
+                "projection": {"keepDone": keep_done},
             },
             ensure_ascii=False,
             indent=2,
@@ -1003,6 +1012,7 @@ def write_state_json(root, goals=None, active_goal=UNSET):
         + "\n",
         encoding="utf-8",
     )
+    write_goal_projections(root, goals, active_goal, keep_done)
 
 
 def status_project(root):
@@ -1091,23 +1101,30 @@ def render_goal_matrix(goals, title="Goal Matrix"):
     return "\n".join(lines) + "\n"
 
 
-def write_goal_matrix_projection(root, goals, active_goal, include_ids=()):
-    path = Path(root) / ".goal-matrix" / "goals" / "goal-matrix.md"
-    existing_ids = {goal.get("id") for goal in read_goal_matrix_markdown(root) if goal.get("id")}
-    required_ids = set(include_ids)
+def split_goal_projections(goals, active_goal, keep_done):
     active_id = active_goal_id(active_goal)
+    done_goals = [goal for goal in goals if goal.get("status", "").lower() == "done"]
+    recent_done_ids = {goal.get("id") for goal in done_goals[-keep_done:]} if keep_done else set()
     visible = []
+    archived = []
     for goal in goals:
         goal_id = goal.get("id")
-        if (
-            goal_id in existing_ids
-            or goal_id in required_ids
-            or goal.get("status", "").lower() != "done"
-            or goal_id == active_id
-        ):
+        if goal.get("status", "").lower() != "done" or goal_id == active_id or goal_id in recent_done_ids:
             visible.append(goal)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_goal_matrix(visible), encoding="utf-8")
+        else:
+            archived.append(goal)
+    return visible, archived
+
+
+def write_goal_projections(root, goals, active_goal, keep_done):
+    goals_dir = Path(root) / ".goal-matrix" / "goals"
+    goals_dir.mkdir(parents=True, exist_ok=True)
+    visible, archived = split_goal_projections(goals, active_goal, keep_done)
+    (goals_dir / "goal-matrix.md").write_text(render_goal_matrix(visible), encoding="utf-8")
+    (goals_dir / "archive.md").write_text(render_goal_matrix(archived, "Goal Matrix Archive"), encoding="utf-8")
+    active_id = active_goal_id(active_goal)
+    active = next((goal for goal in goals if goal.get("id") == active_id), None) if active_id else None
+    (goals_dir / "active-goal.md").write_text(active_goal_projection(active), encoding="utf-8")
 
 
 def prune_project(root, keep_done):
@@ -1120,7 +1137,9 @@ def prune_project(root, keep_done):
         problem
         for problem in problems
         if not problem.startswith("Done goal ")
-        and not problem.startswith("goal matrix drift: ")
+        and not problem.startswith("invalid state projection: ")
+        and not problem.startswith("goal matrix projection drift: ")
+        and not problem.startswith("archive projection drift: ")
         and not problem.startswith("active goal projection drift:")
     ]
     if policy_only_problems:
@@ -1130,26 +1149,8 @@ def prune_project(root, keep_done):
 
     goals = read_goal_matrix(root)
     active_goal = read_active_goal(root)
-    active_id = active_goal_id(active_goal)
-    done_goals = [goal for goal in goals if goal.get("status", "").lower() == "done"]
-    recent_done_ids = {goal.get("id") for goal in done_goals[-keep_done:]} if keep_done else set()
-    visible = []
-    archived = []
-    for goal in goals:
-        status = goal.get("status", "").lower()
-        goal_id = goal.get("id")
-        if goal_id == active_id or status != "done" or goal_id in recent_done_ids:
-            visible.append(goal)
-        else:
-            archived.append(goal)
-
-    goals_dir = root / ".goal-matrix" / "goals"
-    goals_dir.mkdir(parents=True, exist_ok=True)
-    (goals_dir / "goal-matrix.md").write_text(render_goal_matrix(visible), encoding="utf-8")
-    (goals_dir / "archive.md").write_text(render_goal_matrix(archived, "Goal Matrix Archive"), encoding="utf-8")
-    active = next((goal for goal in goals if goal.get("id") == active_id), None) if active_id else None
-    (goals_dir / "active-goal.md").write_text(active_goal_projection(active), encoding="utf-8")
-    write_state_json(root, goals=goals, active_goal=active_goal)
+    visible, archived = split_goal_projections(goals, active_goal, keep_done)
+    write_state_json(root, goals=goals, active_goal=active_goal, keep_done=keep_done)
     print(
         json.dumps(
             {
@@ -1275,9 +1276,7 @@ def start_project(root, prompt):
         goal = {"id": goal_id, **contract}
         active_goal = active_goal_title(goal)
         goals.append(goal)
-        write_active_goal_from_goal(root, goal)
         write_state_json(root, goals=goals, active_goal=active_goal)
-        write_goal_matrix_projection(root, goals, active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "structured": True}, ensure_ascii=False, indent=2))
         return 0
 
@@ -1340,9 +1339,7 @@ def start_project(root, prompt):
                     "status": "Pending",
                 }
             )
-        write_active_goal_from_goal(root, scheduler_goal)
         write_state_json(root, goals=goals, active_goal=active_goal)
-        write_goal_matrix_projection(root, goals, active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
         return 0
 
@@ -1365,25 +1362,9 @@ def start_project(root, prompt):
         "status": "Pending",
     }
     goals.append(goal)
-    write_active_goal_from_goal(root, goal)
     write_state_json(root, goals=goals, active_goal=active_goal)
-    write_goal_matrix_projection(root, goals, active_goal)
     print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
     return 0
-
-
-def write_active_goal_none(root):
-    (Path(root) / ".goal-matrix" / "goals" / "active-goal.md").write_text(
-        active_goal_projection(),
-        encoding="utf-8",
-    )
-
-
-def write_active_goal_from_goal(root, goal):
-    (Path(root) / ".goal-matrix" / "goals" / "active-goal.md").write_text(
-        active_goal_projection(goal),
-        encoding="utf-8",
-    )
 
 
 def checkpoint_project(root, verify_command, if_active=False):
@@ -1427,11 +1408,7 @@ def checkpoint_project(root, verify_command, if_active=False):
     next_active_goal = None
     if next_goal:
         next_active_goal = active_goal_title(next_goal)
-        write_active_goal_from_goal(root, next_goal)
-    else:
-        write_active_goal_none(root)
     write_state_json(root, goals=goals, active_goal=next_active_goal)
-    write_goal_matrix_projection(root, goals, next_active_goal, include_ids=(goal_id,))
     print(
         json.dumps(
             {

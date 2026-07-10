@@ -137,9 +137,9 @@ Treat `.goal-matrix/project-policy.json` as the target project runtime policy so
 
 Payload approvals for approval-required paths must be scoped to the active goal, target path, future expiry, and a reason. Environment approval remains an explicit local emergency override only.
 
-After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for the full active-goal contract and goal-matrix status. Markdown goal files remain a human-readable projection and fallback only when state does not exist; audit rejects drift in either active or matrix projections.
+After `start` or `checkpoint`, `.goal-matrix/state.json` is the canonical machine state for the full active-goal contract, goal-matrix status, and `projection.keepDone` retention setting. Markdown goal files remain a human-readable projection and fallback only when state does not exist; every state write regenerates active, visible, and archive projections, and audit rejects drift in all three.
 
-`.goal-matrix/goals/archive.md` is an immutable read-only snapshot produced by prune; it is not part of drift detection and is not a trusted source of current goal state.
+`.goal-matrix/goals/archive.md` is a generated projection of older Done goals from `state.json`. It participates in drift detection and is never an independent truth source or hand-edit surface.
 
 Fast Lane is allowed only when the project is initialized, there is no active goal, and the request is a trivial typo, copy, or single-function edit. Keep policy-gate and publish-gate enforcement, require focused verification before completion, and skip goal-matrix checkpointing. Protected paths, publish actions, unclear scope, or multi-file behavior changes return to the normal loop.
 

@@ -26,6 +26,16 @@ python3 scripts/validate_plugin_package.py --root .
 python3 scripts/loop_verify.py
 ```
 
+## Goal Projections
+
+`state.json` keeps every goal and stores the visible Done-row limit as `projection.keepDone` (default `10`). Change and persist the limit with:
+
+```bash
+python3 core/goal_guard.py prune --root . --keep-done 10
+```
+
+Every later `start`, `checkpoint`, or `prune` regenerates `goal-matrix.md`, `archive.md`, and `active-goal.md`. Do not hand-edit these generated projections; `audit` rejects drift from `state.json`.
+
 ## Debug
 
 - Missing hook output: confirm `CODEX_PLUGIN_ROOT` points at this plugin and that the hook is trusted by Codex.

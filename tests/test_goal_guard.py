@@ -4021,6 +4021,14 @@ def test_prune_archive_keeps_json_state_and_visible_recent_done():
         status_result = run_guard(["status", "--root", tmp])
         matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
         archive_text = (root / ".goal-matrix" / "goals" / "archive.md").read_text(encoding="utf-8")
+        state_after_prune = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+
+        checkpoint = run_guard(
+            ["checkpoint", "--root", tmp, "--", sys.executable, "-c", "print('verified')"]
+        )
+        final_state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        final_matrix = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
+        final_archive = (root / ".goal-matrix" / "goals" / "archive.md").read_text(encoding="utf-8")
 
     assert result.returncode == 0, result.stderr
     assert "| G4 | Done 4 |" in matrix_text
@@ -4030,16 +4038,52 @@ def test_prune_archive_keeps_json_state_and_visible_recent_done():
     status = json.loads(status_result.stdout)
     assert status["goalMatrix"]["total"] == 5
     assert status["goalMatrix"]["pending"] == 1
+    assert state_after_prune["projection"]["keepDone"] == 1
+    assert checkpoint.returncode == 0, checkpoint.stderr
+    assert final_state["projection"]["keepDone"] == 1
+    assert "| G5 | Active slice |" in final_matrix
+    assert "| G4 | Done 4 |" not in final_matrix
+    assert "| G4 | Done 4 |" in final_archive
 
 
-def test_archive_snapshot_trust_boundary_is_documented():
+def test_audit_rejects_archive_projection_drift():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Archive truth").returncode == 0
+        assert run_guard(["prune", "--root", tmp, "--keep-done", "0"]).returncode == 0
+        archive_path = root / ".goal-matrix" / "goals" / "archive.md"
+        archive_path.write_text(archive_path.read_text(encoding="utf-8") + "manual edit\n", encoding="utf-8")
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "archive projection drift" in result.stderr
+
+
+def test_audit_rejects_invalid_projection_retention():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Projection config").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["projection"]["keepDone"] = -1
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        result = run_guard(["audit", "--root", tmp])
+
+    assert result.returncode == 1
+    assert "projection.keepDone must be a non-negative integer" in result.stderr
+
+
+def test_archive_projection_trust_boundary_is_documented():
     protocol = read_text("core/protocol.md")
 
     assert ".goal-matrix/goals/archive.md" in protocol
-    assert "immutable" in protocol
-    assert "read-only snapshot" in protocol
-    assert "not part of drift detection" in protocol
-    assert "not a trusted source of current goal state" in protocol
+    assert "generated projection" in protocol
+    assert "drift detection" in protocol
+    assert "state.json" in protocol
 
 
 def test_audit_rejects_visible_done_goal_with_status_only_verification():
@@ -4144,7 +4188,7 @@ def test_audit_rejects_visible_goal_matrix_drift_from_state_json():
         result = run_guard(["audit", "--root", tmp])
 
     assert result.returncode == 1
-    assert "goal matrix drift: G1 userOutcome differs from state.json" in result.stderr
+    assert "goal matrix projection drift: goal-matrix.md differs from state.json" in result.stderr
 
 
 def test_state_json_remains_authoritative_across_checkpoint():
@@ -4186,7 +4230,7 @@ def test_audit_rejects_missing_pending_projection_row():
         result = run_guard(["audit", "--root", tmp])
 
     assert result.returncode == 1
-    assert "goal matrix drift: required goal G1 is missing from Markdown projection" in result.stderr
+    assert "goal matrix projection drift: goal-matrix.md differs from state.json" in result.stderr
 
 
 def test_checkpoint_preserves_extended_matrix_fields():

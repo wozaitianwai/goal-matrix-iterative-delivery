@@ -24,7 +24,7 @@ LEVEL_ORDER = {level: index for index, level in enumerate(("L0", *LEVELS))}
 
 RUN_LOG_LINE_LIMIT = 500
 STATUS_OUTPUT_CHAR_LIMIT = 40000
-HOOK_OUTPUT_CHAR_LIMIT = 12000
+HOOK_OUTPUT_CHAR_LIMIT = 6000
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
 GOVERNANCE_STATE_HINTS = ("governance", "approval", "publish", "policy", "gate", "protected", "blocked")
 MACHINE_ENV_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:APPROVED|APPROVAL|GOVERNANCE|PUBLISH)[A-Z0-9_]*\b")

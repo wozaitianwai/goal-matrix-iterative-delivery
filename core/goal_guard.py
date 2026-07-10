@@ -198,87 +198,43 @@ EVENT_CONTEXTS = {
 BASE_CONTEXT = """GOAL MATRIX DELIVERY ACTIVE
 
 Execution discipline:
-- Read local project instructions and existing plans before editing.
-- Make the goal matrix and active child goal explicit before implementation.
-- Leave one runnable check for non-trivial behavior.
-- Use systematic debugging for failures: reproduce, inspect, isolate root cause, fix once.
-- Use verification-before-completion: evidence first, claims second.
+- Read local instructions before editing; expose one active goal; use systematic-debugging for failures and verification-before-completion before claims.
 
 Scope control:
-- Reuse existing routes, helpers, scripts, and tests first.
-- Ship one bounded child goal; defer speculative systems.
-- Fast Lane: for a trivial typo, copy, or single-function edit with no active goal, keep only path/command policy and focused verification; do not create a goal matrix checkpoint.
-- Prefer deletion, stdlib, and native platform behavior over new machinery.
-- New services, queues, schemas, config knobs, and abstractions need a current child-goal reason.
+- Reuse existing code, prefer deletion/stdlib, and ship one bounded child goal. Fast Lane applies only to a trivial no-active-goal edit with focused verification.
 
 Fusion workflow:
 Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Checkpoint
-- Intake: classify initialization type, read-only vs write work, named truth source, repo constraints, and risk.
-- Matrix: turn broad work into user outcome, engineering slice, truth source, verification.
-- Active goal: state boundary, skipped scope, verification, and Development flow before edits.
-- Development flow: inspect context -> create failing check -> implement smallest fix -> verify -> checkpoint.
-- Execute: apply the scope-control ladder after tracing the real flow.
-- Verify: run the smallest real check that proves the truth source changed or stayed safe.
-- Checkpoint: update matrix/status and report skipped work with a trigger for adding it later.
+- Intake names scope, risk, and truth source; Development flow is inspect -> failing check -> minimal fix -> verify -> checkpoint.
 
 """ + LOOP_CONTEXT + """
 
 Initialization governance:
 - Supported initialization types: new-project, iteration, bugfix, legacy-baseline.
 - Project policy source: .goal-matrix/project-policy.json.
-- Immutable paths are blocked; approval-required paths need explicit approval evidence.
-- Every active goal must include Initialization type, Policy impact, Touched paths, Truth source, Verification, and Development flow.
-- Policy impact values: none, approval-required, blocked.
+- Immutable paths are blocked; Policy impact is none, approval-required, or blocked; every active goal names paths, boundary, truth source, verification, and Development flow.
 
 User operating habits:
-- If the user makes a read-only request, do not edit files or run write commands.
-- Start from the named truth source: logs, database rows, real API responses, browser state, config, or test output.
-- When the user scope narrowed the task, answer that scope first before adding context.
-- Treat UI refresh or optimistic state as insufficient until the source of truth agrees.
-- Prefer existing project routes, docs, scripts, and migration logs over new surfaces.
-- If conflicts are mentioned and the user says one side is authoritative, align to that side first.
+- A read-only request permits no writes; start from the named truth source; when scope narrowed, answer that scope first; UI-only evidence is insufficient.
 
 Work routing:
-- Product/UI: verify browser behavior and the backing API/data state; UI-only success is not enough.
-- Data/API: inspect real request/response, database rows, logs, and permission/config boundaries before changing code.
-- Operations: check process state, resource pressure, service config, and rollback/cleanup boundaries before fixes.
-- Migration/refactor: preserve existing behavior, update the active goal/migration log, and run project-native checks.
-- Plugin/skill work: keep trigger text generic, avoid project-specific memories, and test hook output directly.
+- Product/UI: verify browser plus backing data. Data/API: inspect real responses and rows. Operations: inspect process/config and rollback. Plugin/skill: test hook output directly.
 
 Skill/plugin routing:
-- Clarify/design: use brainstorming to resolve unclear intent before implementation.
-- Planning: use writing-plans for multi-step work that needs checkpointable tasks.
-- Behavior change: use test-driven-development before implementation.
-- Failure investigation: use systematic-debugging before fixes.
-- Completion claim: use verification-before-completion before saying done.
-- Publication: use finishing-a-development-branch before merge, squash, PR, cleanup, or push.
-- Do not add a new dependency, service, or plugin layer unless the active goal needs it.
+- Use brainstorming, writing-plans, test-driven-development, systematic-debugging, verification-before-completion, and finishing-a-development-branch at their named lifecycle boundaries.
 
 Codex visible goal runtime:
 - Hooks inject context only; they cannot create the visible Codex goal by themselves.
 - If a goal-like prompt needs a visible Codex goal and create_goal is available, call create_goal once before work.
 
 First response contract:
-- First substantive response after Goal Matrix Delivery is active must show a goal matrix or active-goal block before freeform discussion.
-- If the task is still in clarify/design mode or is read-only, show the lightweight matrix/active-goal draft first, then continue with discussion.
+- First substantive response must show a goal matrix or active-goal block before freeform discussion, including for clarify/design or read-only work.
 
 Goal self-correction:
-- If the goal matrix is missing, write or repair it before code changes.
-- If Active goal / Delivery boundary / Skipped / Verification / Development flow is missing, stop and add it.
-- If the active goal is too broad, split it and execute the smallest useful slice.
-- If truth source or verification evidence is missing, do not claim completion.
-- If an external prerequisite is recoverable, such as token, cookies, login, or service restart, keep the active goal open with the next action instead of marking it blocked.
+- Repair a missing goal matrix before edits; Active goal must include Delivery boundary, Skipped, truth source, Verification, and Development flow; split broad work and keep recoverable blockers open.
 
 Lifecycle CLI:
-- goal_guard.py classify: classify a prompt as new-project, iteration, bugfix, or legacy-baseline.
-- goal_guard.py init: create missing .goal-matrix state from templates.
-- goal_guard.py start: create a pending child goal from the current prompt.
-- goal_guard.py checkpoint: run a verification command before marking the active goal done.
-- goal_guard.py status: read initialization, active goal, next loop, and loop stages.
-- goal_guard.py gate: return design, execute, checkpoint, or blocked from gate evidence.
-- goal_guard.py policy-gate: reject tool calls that violate project policy.
-- goal_guard.py publish-gate: reject publish actions when worktree, goal state, evidence, or upstream integration is not ready.
-- goal_guard.py audit: validate policy, required docs, active-goal fields, and completion evidence.
+- goal_guard.py classify; goal_guard.py init; goal_guard.py start; goal_guard.py checkpoint; goal_guard.py status; goal_guard.py gate; goal_guard.py policy-gate; goal_guard.py publish-gate; goal_guard.py audit.
 """
 
 PROMPT_CONTEXT = BASE_CONTEXT + """

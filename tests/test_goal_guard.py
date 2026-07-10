@@ -860,24 +860,24 @@ def test_loop_verifier_skill_is_packaged_and_audited():
     assert audit["level"] == ("L3" if audit["signals"]["remoteRunEvidenceCurrentHead"] else "L2")
 
 
-def test_loop_engineering_gap_register_tracks_unfinished_work():
+def test_loop_docs_describe_current_operational_boundaries():
     loop = read_text("LOOP.md")
     state = read_text("STATE.md")
 
     for phrase in (
-        "Engineering Gap Register",
         "run-log readback is informational only",
-        "recorded run URLs/statuses cannot promote local audits",
-        "maker-checker",
-        "run-evidence",
-        "Resolved: keep clone/install/doctor evidence",
-        "connectors",
-        "governance",
-        "Resolved: keep policy, tests, and verifier output together",
+        "trusted GitHub Actions context matching the checked-out HEAD",
+        "pull request and required-check ruleset",
+        "machine goal status is read from `.goal-matrix/state.json`",
     ):
         assert phrase in loop
-    assert "engineering gap register" in state
+    assert "G23-G36" not in loop
+    assert "Engineering Gap Register" not in loop
+    assert "Resolved:" not in loop
+    assert "marketplace is the only global plugin installation path" in state
+    assert "current-head PR and CI evidence" in state
     assert "machine goal status stays in `.goal-matrix/state.json`" in state
+    assert "Hook/runtime simplification remains outside" not in state
 
 
 def test_ci_workflow_runs_loop_engineering_gates():
@@ -1009,6 +1009,7 @@ def test_loop_audit_reports_current_friction_budget():
     budget = audit["frictionBudget"]
     assert budget["statusOutputChars"] > 0
     assert budget["hookOutputChars"] > 0
+    assert budget["hookOutputCharLimit"] == 6000
     assert budget["statusOutputChars"] <= budget["statusOutputCharLimit"]
     assert budget["hookOutputChars"] <= budget["hookOutputCharLimit"]
     assert audit["signals"]["frictionBudgetExceeded"] is False

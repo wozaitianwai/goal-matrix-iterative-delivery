@@ -408,12 +408,29 @@ def status_payload(root):
     problems = audit_project(root)
     active_goal = read_active_goal(root)
     goals = read_goal_matrix(root)
+    if (
+        not state_goal_matrix_available(root)
+        and active_goal == "G<n> - <name>"
+        and goals
+        == [
+            {
+                "id": "G0",
+                "userOutcome": "Initialize project governance",
+                "engineeringSlice": "Create `.goal-matrix` baseline",
+                "truthSource": "Policy/docs",
+                "verification": "Audit passes",
+                "status": "Pending",
+            }
+        ]
+    ):
+        active_goal = None
+        goals = []
     return {
         "root": str(root),
         "initialized": not problems,
         "auditProblems": problems,
         "activeGoal": active_goal,
-        "nextLoop": read_next_loop(root, active_goal),
+        "nextLoop": read_next_loop(root, active_goal) if goals else None,
         "nextAction": next_action_payload(root, goals, active_goal),
         "subagentCandidates": subagent_candidates(goals, active_goal),
         "goalMatrix": status_goal_matrix_summary(root, goals, active_goal),
@@ -425,15 +442,6 @@ def status_project(root):
     payload = status_payload(root)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload["initialized"] else 1
-
-
-def first_prompt_line(text):
-    text = prompt_text(text.lstrip("\ufeff").strip())
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line[:80]
-    return "Start next goal"
 
 
 def structured_start_contract(text):
@@ -548,20 +556,44 @@ def start_project(root, prompt):
         if not (goal.get("id") == "G0" and goal.get("userOutcome") == "Initialize project governance")
     ]
     active_goal = read_active_goal(root)
+    contract, contract_problems = structured_start_contract(prompt)
+    if contract_problems:
+        for problem in contract_problems:
+            print(f"invalid start contract: {problem}", file=sys.stderr)
+        return 2
+
     if has_pending_active_goal(goals, active_goal):
-        print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
-        return 0
+        active_id = active_goal_id(active_goal)
+        active_index = next(index for index, goal in enumerate(goals) if goal.get("id") == active_id)
+        if goals[active_index].get("contractComplete") is not True:
+            if not contract:
+                print("structured JSON contract required to repair incomplete active goal", file=sys.stderr)
+                return 2
+            problems = audit_project(root)
+            incomplete_problem = "active goal contract is incomplete: use structured start input"
+            if not problems or any(problem != incomplete_problem for problem in problems):
+                for problem in problems:
+                    print(problem, file=sys.stderr)
+                return 1
+            goals[active_index] = {"id": active_id, **contract}
+            active_goal = active_goal_title(goals[active_index])
+            write_state_json(root, goals=goals, active_goal=active_goal)
+            print(
+                json.dumps(
+                    {"activeGoal": active_goal, "root": str(root), "structured": True, "repaired": True},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        print(f"active goal still open: {active_goal}; run checkpoint before starting another goal", file=sys.stderr)
+        return 1
 
     problems = audit_project(root)
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)
         return 1
-    contract, contract_problems = structured_start_contract(prompt)
-    if contract_problems:
-        for problem in contract_problems:
-            print(f"invalid start contract: {problem}", file=sys.stderr)
-        return 2
 
     goals_dir = root / ".goal-matrix" / "goals"
     goals_dir.mkdir(parents=True, exist_ok=True)
@@ -573,6 +605,10 @@ def start_project(root, prompt):
         goals.append(goal)
         write_state_json(root, goals=goals, active_goal=active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "structured": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if re.search(r"开始进化|自我进化|自进化|self[- ]evolution", prompt_text(prompt), re.IGNORECASE):
+        print(json.dumps({"activeGoal": None, "complete": True}, ensure_ascii=False, indent=2))
         return 0
 
     items = broad_prompt_items(prompt)
@@ -622,28 +658,8 @@ def start_project(root, prompt):
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
         return 0
 
-    title = first_prompt_line(prompt)
-    active_goal = f"{goal_id} - {title}"
-
-    goal = {
-        "id": goal_id,
-        "userOutcome": title,
-        "engineeringSlice": "Start one bounded child goal",
-        "truthSource": "`.goal-matrix` status",
-        "verification": "`python3 core/goal_guard.py status --root .`",
-        "initializationType": "iteration",
-        "policyImpact": "none",
-        "touchedPaths": "TBD",
-        "deliveryBoundary": "one bounded child goal from the current prompt",
-        "skipped": "unrelated work",
-        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
-        "contractComplete": False,
-        "status": "Pending",
-    }
-    goals.append(goal)
-    write_state_json(root, goals=goals, active_goal=active_goal)
-    print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
-    return 0
+    print("structured JSON contract required for a single goal", file=sys.stderr)
+    return 2
 
 
 def checkpoint_project(root, verify_command, if_active=False):

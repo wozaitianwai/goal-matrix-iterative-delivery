@@ -58,7 +58,12 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
-plain text 输入只会创建被阻断的 draft；实现前必须提供上面的结构化 contract。
+`start` 状态不变量：
+
+- 普通单目标输入不写入状态，必须改为提交上面的结构化 JSON contract（Plain single-goal input does not write state）。
+- 完整结构化输入会原位修复不完整的 active goal，并保留原 id（Complete structured input repairs an incomplete active goal in place and preserves its id）。
+- 完整的 active goal 必须先 checkpoint，后续 `start` 不会覆盖它（A complete active goal requires checkpoint and is not overwritten）。
+- self-evolution 在没有 pending goal 时直接返回 complete，不合成 backlog 状态（Self-evolution with no pending goal returns complete）。
 
 流程保持很小：
 

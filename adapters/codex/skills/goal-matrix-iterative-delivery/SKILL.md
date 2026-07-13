@@ -56,7 +56,12 @@ Verification: <smallest real check>
 Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 ```
 
-Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Plain text input creates a blocked draft; do not execute or checkpoint it.
+Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Its state invariants are:
+
+- Plain single-goal input does not write state; hook-style `{ "prompt": ... }` input follows the same rule.
+- Complete structured input repairs an incomplete active goal in place and preserves its id and Pending status.
+- A complete active goal requires checkpoint and is not overwritten by another start.
+- Self-evolution with no pending goal returns complete without creating state or synthesizing a backlog.
 
 ## Loop Engineering
 

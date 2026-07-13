@@ -49,8 +49,8 @@ def run_guard(args, text="", cwd=ROOT, env=None):
     )
 
 
-def run_structured_start(root, title, verification="python3 --version"):
-    contract = {
+def structured_start_contract(title, verification="python3 --version"):
+    return {
         "userOutcome": title,
         "engineeringSlice": f"Implement {title}",
         "initializationType": "iteration",
@@ -62,6 +62,10 @@ def run_structured_start(root, title, verification="python3 --version"):
         "verification": verification,
         "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
     }
+
+
+def run_structured_start(root, title, verification="python3 --version"):
+    contract = structured_start_contract(title, verification)
     return run_guard(["start", "--root", str(root)], json.dumps(contract))
 
 
@@ -129,7 +133,7 @@ def test_core_protocol_defines_loop_engineering_contract():
         assert phrase in text
 
 
-def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
+def test_start_docs_require_structured_contract_and_recovery_invariants():
     protocol = read_text("core/protocol.md")
     skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
     english = read_text("README.md")
@@ -149,9 +153,17 @@ def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
     ):
         assert f'"{field}"' in protocol
     assert "structured JSON" in skill
-    assert "plain text" in skill.lower() and "draft" in skill.lower()
     assert '"userOutcome"' in english
     assert '"userOutcome"' in chinese
+    for text in (protocol, skill, english, chinese):
+        lowered = text.lower()
+        for invariant in (
+            "plain single-goal input does not write state",
+            "complete structured input repairs an incomplete active goal in place and preserves its id",
+            "a complete active goal requires checkpoint and is not overwritten",
+            "self-evolution with no pending goal returns complete",
+        ):
+            assert invariant in lowered
 
 
 def test_core_templates_exist():
@@ -2916,7 +2928,7 @@ def test_active_verify_uses_state_json_instead_of_edited_markdown():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Verify JSON contract").returncode == 0
+        assert run_structured_start(tmp, "Verify JSON contract").returncode == 0
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state_goal = state["goalMatrix"]["childGoals"][0]
@@ -2951,7 +2963,7 @@ def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "JSON boundary").returncode == 0
+        assert run_structured_start(tmp, "JSON boundary").returncode == 0
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state_goal = state["goalMatrix"]["childGoals"][0]
@@ -2965,7 +2977,7 @@ def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
         write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
         active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
         write_file(active_path, active_path.read_text(encoding="utf-8").replace(
-            "Delivery boundary: one bounded child goal from the current prompt",
+            "Delivery boundary: JSON boundary only",
             "Delivery boundary: edited by hand",
         ))
 
@@ -3024,7 +3036,7 @@ def test_stop_hook_never_executes_active_goal_verification():
         root = Path(tmp)
         marker = root / "stop-side-effect"
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Unsafe verification").returncode == 0
+        assert run_structured_start(tmp, "Unsafe verification").returncode == 0
         write_file(
             root / ".goal-matrix" / "goals" / "active-goal.md",
             f"""# Active Goal
@@ -3125,7 +3137,7 @@ def test_twenty_tool_calls_emit_zero_additional_context():
     assert aggregate.count("additionalContext") == 0
 
 
-def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
+def test_stop_hook_allows_preexisting_dirty_no_active_goal():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -3136,6 +3148,14 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
         write_file(
             project_root / ".goal-matrix" / "goals" / "active-goal.md",
             "Active goal: none\n",
+        )
+        write_file(
+            project_root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+""",
         )
         subprocess.run(["git", "add", "."], cwd=project_root, check=True, capture_output=True, text=True)
         subprocess.run(
@@ -3157,8 +3177,9 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
             env=env,
         )
 
-    assert result.returncode == 2
-    assert "Fast Lane requires focused verification" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+    assert "Fast Lane" not in result.stderr
 
 
 def test_codex_hook_commands_use_official_plugin_root_in_foreign_cwd():
@@ -4437,22 +4458,24 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     assert json.loads(result.stdout)["nextLoop"] is None
 
 
-def test_start_command_creates_pending_active_goal_from_prompt():
+def test_plain_single_goal_start_rejects_without_state_write():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], "goal iteration still does not start")
-        status_result = run_guard(["status", "--root", tmp])
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
 
-    assert started.returncode == 0, started.stderr
-    payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - goal iteration still does not start"
-
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - goal iteration still does not start"
-    assert status["goalMatrix"]["pending"] == 1
-    assert status["goalMatrix"]["childGoals"][0]["id"] == "G1"
-    assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+    assert status["activeGoal"] is None
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
 
 
 def test_start_command_accepts_complete_structured_contract():
@@ -4486,32 +4509,76 @@ def test_start_command_accepts_complete_structured_contract():
     assert audit.returncode == 0, audit.stderr
 
 
-def test_plain_start_creates_blocked_draft_contract():
+def test_structured_start_repairs_incomplete_active_in_place():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        legacy = json.loads(state_path.read_text(encoding="utf-8"))
+        legacy["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(legacy, ensure_ascii=False, indent=2) + "\n")
 
-        started = run_guard(["start", "--root", tmp], "Unclear draft")
-        audit = run_guard(["audit", "--root", tmp])
-        checkpoint = run_guard(
-            [
-                "checkpoint",
-                "--root",
-                tmp,
-                "--",
-                sys.executable,
-                "-c",
-                "from pathlib import Path; Path('draft-ran').write_text('wrong')",
-            ]
+        started = run_guard(
+            ["start", "--root", tmp],
+            json.dumps(structured_start_contract("Repaired contract")),
         )
-        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        audit = run_guard(["audit", "--root", tmp])
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        active_text = (root / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
 
-        assert started.returncode == 0, started.stderr
-        assert state["goalMatrix"]["childGoals"][0]["contractComplete"] is False
-        assert audit.returncode == 1
-        assert "active goal contract is incomplete" in audit.stderr
-        assert checkpoint.returncode == 1
-        assert not (root / "draft-ran").exists()
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout)["repaired"] is True
+    assert len(state["goalMatrix"]["childGoals"]) == 1
+    goal = state["goalMatrix"]["childGoals"][0]
+    assert goal["id"] == "G1"
+    assert goal["status"] == "Pending"
+    assert goal["contractComplete"] is True
+    assert goal["userOutcome"] == "Repaired contract"
+    assert state["activeGoal"] == "G1 - Repaired contract"
+    assert "Active goal: G1 - Repaired contract" in active_text
+    assert audit.returncode == 0, audit.stderr
+
+
+def test_plain_start_cannot_repair_incomplete_active():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        before = state_path.read_bytes()
+
+        started = run_guard(["start", "--root", tmp], "repair this draft")
+
+        assert state_path.read_bytes() == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+
+
+def test_structured_start_does_not_hide_drift_while_repairing_incomplete_active():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        write_file(active_path, active_path.read_text(encoding="utf-8").replace("Legacy incomplete", "Drifted title"))
+        before = state_path.read_bytes()
+
+        started = run_guard(
+            ["start", "--root", tmp],
+            json.dumps(structured_start_contract("Must not repair")),
+        )
+
+        assert state_path.read_bytes() == before
+    assert started.returncode == 1
+    assert "active goal projection drift" in started.stderr
 
 
 def test_structured_start_rejects_metadata_only_verification_before_state_write():
@@ -4563,30 +4630,43 @@ def test_structured_start_rejects_non_string_verification_without_traceback():
         assert not (root / ".goal-matrix" / "state.json").exists()
 
 
-def test_start_command_keeps_existing_active_goal():
+def test_structured_start_does_not_overwrite_complete_active():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "first goal").returncode == 0
+        assert run_structured_start(tmp, "first goal").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        before = state_path.read_bytes()
 
-        second = run_guard(["start", "--root", tmp], "second goal")
-        status_result = run_guard(["status", "--root", tmp])
+        second = run_structured_start(tmp, "second goal")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
 
-    assert second.returncode == 0, second.stderr
-    assert json.loads(second.stdout)["activeGoal"] == "G1 - first goal"
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - first goal"
-    assert status["goalMatrix"]["total"] == 1
-    assert status["goalMatrix"]["pending"] == 1
+        assert state_path.read_bytes() == before
+    assert second.returncode == 1
+    assert "G1 - first goal" in second.stderr
+    assert "checkpoint" in second.stderr
+    assert len(state["goalMatrix"]["childGoals"]) == 1
+    assert all(goal["id"] != "G2" for goal in state["goalMatrix"]["childGoals"])
 
 
-def test_start_command_extracts_prompt_from_hook_json():
+def test_hook_prompt_start_rejects_without_state_write():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], json.dumps({"prompt": "goal matrix 工程化"}))
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
 
-    assert started.returncode == 0, started.stderr
-    assert json.loads(started.stdout)["activeGoal"] == "G1 - goal matrix 工程化"
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+    assert status["activeGoal"] is None
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
 
 
 def test_start_broad_prompt_creates_pending_matrix_before_dispatch():
@@ -4625,25 +4705,46 @@ P2 Markdown canonical state
 
 def test_start_self_evolution_prompt_does_not_invent_backlog():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], "开始进化")
-        active_verify_result = run_guard(["active-verify", "--root", tmp])
-        status_result = run_guard(["status", "--root", tmp])
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
+        state_exists = (root / ".goal-matrix" / "state.json").exists()
+        projections = (active_path.read_bytes(), matrix_path.read_bytes())
 
     assert started.returncode == 0, started.stderr
-    assert active_verify_result.returncode == 1
-    assert "metadata-only" in active_verify_result.stderr
     payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - 开始进化"
-    assert "plannedChildGoals" not in payload
-
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - 开始进化"
+    assert payload == {"activeGoal": None, "complete": True}
+    assert not state_exists
+    assert projections == before
+    assert status["activeGoal"] is None
     assert status["nextLoop"] is None
-    assert status["goalMatrix"]["total"] == 1
-    assert status["goalMatrix"]["pending"] == 1
-    assert status["goalMatrix"]["childGoals"][0]["contractComplete"] is False
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
+
+
+def test_start_self_evolution_prompt_does_not_plan_embedded_priority_items():
+    prompt = """开始自我进化
+P0 inspect current gaps
+P1 implement the next gap
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
+
+        started = run_guard(["start", "--root", tmp], prompt)
+
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout) == {"activeGoal": None, "complete": True}
 
 
 def test_start_command_escapes_pipe_in_prompt_title():
@@ -4651,7 +4752,7 @@ def test_start_command_escapes_pipe_in_prompt_title():
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
-        started = run_guard(["start", "--root", tmp], "fix parser | keep table safe")
+        started = run_structured_start(tmp, "fix parser | keep table safe")
         status_result = run_guard(["status", "--root", tmp])
         matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
 
@@ -4667,7 +4768,7 @@ def test_state_json_is_canonical_after_start():
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
-        started = run_guard(["start", "--root", tmp], "canonical machine state")
+        started = run_structured_start(tmp, "canonical machine state")
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         write_file(root / ".goal-matrix" / "goals" / "active-goal.md", "Active goal: corrupted\n")
@@ -5043,7 +5144,7 @@ def test_audit_rejects_missing_pending_projection_row():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Required pending row").returncode == 0
+        assert run_structured_start(tmp, "Required pending row").returncode == 0
         write_file(
             root / ".goal-matrix" / "goals" / "goal-matrix.md",
             """# Goal Matrix
@@ -5227,16 +5328,12 @@ def test_checkpoint_if_active_ignores_missing_active_goal():
 def test_doctor_command_reports_resume_and_plugin_source():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        active_goal = next(
-            line.split(":", 1)[1].strip()
-            for line in (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text().splitlines()
-            if line.startswith("Active goal:")
-        )
+        assert run_structured_start(tmp, "Doctor resume").returncode == 0
         result = run_guard(["doctor", "--root", tmp])
 
     assert result.returncode == 0, result.stderr
     doctor = json.loads(result.stdout)
-    assert doctor["resume"]["activeGoal"] == active_goal
+    assert doctor["resume"]["activeGoal"] == "G1 - Doctor resume"
     assert "nextLoop" in doctor["resume"]
     assert doctor["source"]["pluginRoot"] == str(ROOT)
     assert doctor["source"]["manifestPath"].endswith(".codex-plugin/plugin.json")

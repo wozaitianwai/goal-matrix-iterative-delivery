@@ -9,6 +9,24 @@ from pathlib import Path
 
 
 DEFAULT_APPROVAL_ENV = "GOAL_MATRIX_APPROVED"
+SHELL_CONTROL = set(";&|()\r\n")
+SHELL_REDIRECTIONS = {"<", "<<", "<<<", "<>", ">", ">>", ">|", "&>", "&>>", ">&"}
+OUTPUT_REDIRECTIONS = {"<>", ">", ">>", ">|", "&>", "&>>", ">&"}
+READ_ONLY_COMMANDS = {
+    "cat",
+    "file",
+    "grep",
+    "head",
+    "ls",
+    "nl",
+    "pwd",
+    "readlink",
+    "realpath",
+    "rg",
+    "stat",
+    "tail",
+    "wc",
+}
 
 
 def load_project_policy(root):
@@ -171,21 +189,94 @@ def payload_has_approval(raw, path, active_goal):
     return False
 
 
-def command_literal_policy_paths(command, root, patterns):
-    if not patterns:
-        return []
+def shell_command_segments(command):
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;<>()")
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;<>()\r\n")
+        lexer.whitespace = " \t"
         lexer.whitespace_split = True
         lexer.commenters = ""
         tokens = list(lexer)
     except ValueError:
         return []
-    paths = set()
+
+    segments = []
+    segment = []
     for token in tokens:
-        path = normalize_policy_path(root, token)
-        if path and policy_path_matches(path, patterns):
-            paths.add(path)
+        if token and set(token) <= SHELL_CONTROL:
+            if segment:
+                segments.append(segment)
+                segment = []
+        else:
+            segment.append(token)
+    if segment:
+        segments.append(segment)
+    return segments
+
+
+def shell_segment_parts(segment):
+    argv = []
+    redirections = []
+    index = 0
+    while index < len(segment):
+        token = segment[index]
+        if token in SHELL_REDIRECTIONS:
+            target = segment[index + 1] if index + 1 < len(segment) else ""
+            redirections.append((token, target))
+            index += 2
+        else:
+            argv.append(token)
+            index += 1
+    return argv, redirections
+
+
+def shell_segment_is_read_only(argv):
+    if not argv:
+        return False
+    command = argv[0].lower()
+    if command in READ_ONLY_COMMANDS:
+        return True
+    if command != "sed":
+        return False
+    return not any(token.startswith("-i") or token.startswith("--in-place") for token in argv[1:])
+
+
+def rm_has_operand(argv):
+    after_options = False
+    for token in argv[1:]:
+        if after_options:
+            return True
+        if token == "--":
+            after_options = True
+        elif token == "-" or not token.startswith("-"):
+            return True
+    return False
+
+
+def policy_command_argv(argv):
+    cursor = 0
+    while cursor < len(argv):
+        token = argv[cursor]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token) or token in {"sudo", "env", "command"}:
+            cursor += 1
+            continue
+        break
+    return argv[cursor:]
+
+
+def command_literal_policy_paths(command, root, patterns):
+    if not patterns:
+        return []
+    paths = set()
+    for segment in shell_command_segments(command):
+        argv, redirections = shell_segment_parts(segment)
+        candidates = [target for operator, target in redirections if operator in OUTPUT_REDIRECTIONS]
+        if argv and argv[0].lower() not in {"echo", "printf"} and not shell_segment_is_read_only(argv):
+            candidates.extend(argv[1:])
+            candidates.extend(target for operator, target in redirections if operator not in OUTPUT_REDIRECTIONS)
+        for token in candidates:
+            path = normalize_policy_path(root, token)
+            if path and policy_path_matches(path, patterns):
+                paths.add(path)
     return sorted(paths)
 
 
@@ -205,6 +296,24 @@ def protected_command_matches(command, protected):
     if re.search(r"\s", protected_lower):
         return protected_lower in command_lower
     return bool(re.search(rf"(^|[\s;&|()]){re.escape(protected_lower)}($|[\s;&|()])", command_lower))
+
+
+def policy_protected_command_matches(command, protected):
+    try:
+        protected_tokens = [token.lower() for token in shlex.split(protected)]
+    except ValueError:
+        return False
+    if not protected_tokens:
+        return False
+    for segment in shell_command_segments(command):
+        argv, _ = shell_segment_parts(segment)
+        argv = policy_command_argv(argv)
+        if [token.lower() for token in argv[: len(protected_tokens)]] != protected_tokens:
+            continue
+        if protected_tokens == ["rm"] and not rm_has_operand(argv):
+            continue
+        return True
+    return False
 
 
 def policy_gate_problems(root, raw, active_goal=""):
@@ -230,7 +339,7 @@ def policy_gate_problems(root, raw, active_goal=""):
 
     for command in collect_payload_commands(raw):
         for protected in policy.get("protectedCommands", []):
-            if protected_command_matches(command, protected):
+            if policy_protected_command_matches(command, protected):
                 problems.append(f"protected command: {protected}")
     return problems
 

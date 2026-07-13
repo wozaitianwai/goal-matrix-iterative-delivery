@@ -3623,8 +3623,18 @@ def test_policy_gate_shell_literal_path_requires_approval_and_documents_dynamic_
     assert json.loads(denied.stdout)["paths"] == [".env"]
     assert ".env requires approval" in denied.stderr
     assert approved.returncode == 0, approved.stderr
-    assert "literal shell path tokens" in threat_model
-    assert "dynamic shell expansion" in threat_model
+    assert "literal shell write targets" in threat_model
+    for phrase in (
+        "variables",
+        "command substitution",
+        "aliases",
+        "eval",
+        "bash -c",
+        "interpreter semantics",
+        "dynamic paths",
+        "wrapper option grammar",
+    ):
+        assert phrase in threat_model
 
 
 def test_policy_gate_rejects_unscoped_payload_approval():
@@ -3731,6 +3741,266 @@ def test_policy_gate_blocks_protected_commands_from_tool_payload():
     assert result.returncode == 1
     assert "protected command" in result.stderr
     assert "git reset --hard" in result.stderr
+
+
+def test_policy_gate_allows_protected_command_without_write_target():
+    commands = ("rm --help", "rm --version", "rm -f")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm"])
+        results = {
+            command: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        }
+
+    for command, result in results.items():
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_treats_single_dash_as_rm_operand():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": "rm -"}}),
+        )
+
+    assert result.returncode == 1, result.stderr
+    assert "protected command: rm" in result.stderr
+
+
+def test_policy_gate_ignores_protected_command_token_in_read_only_arguments():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm"])
+        command = "rg rm README.md"
+        result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook", "--debug"],
+            json.dumps({"tool_input": {"cmd": command}}),
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_allows_read_only_access_to_approval_required_path():
+    commands = (
+        "cat package.json",
+        "file package.json",
+        "grep name package.json",
+        "head package.json",
+        "ls package.json",
+        "nl package.json",
+        "pwd package.json",
+        "readlink package.json",
+        "realpath package.json",
+        "rg name package.json",
+        "sed -n '1,20p' package.json",
+        "stat package.json",
+        "tail package.json",
+        "wc package.json",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        results = {
+            command: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        }
+
+    for command, result in results.items():
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_blocks_explicit_writes_to_approval_required_path():
+    payloads = {
+        "rm operand": {"tool_input": {"cmd": "rm package.json"}},
+        "sed in-place": {"tool_input": {"cmd": "sed -i.bak 's/x/y/' package.json"}},
+        "output redirect": {"tool_input": {"cmd": "printf x > package.json"}},
+        "apply patch": {
+            "tool_input": {
+                "patch": "*** Begin Patch\n*** Update File: package.json\n@@\n-old\n+new\n*** End Patch\n"
+            }
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"], protectedCommands=["rm"])
+        results = {
+            name: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps(payload),
+            )
+            for name, payload in payloads.items()
+        }
+
+    for name, result in results.items():
+        assert result.returncode == 1, f"{name}: {result.stderr}"
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_policy_gate_matches_protected_commands_only_at_segment_command_position():
+    allowed = ("echo rm README.md", "echo git reset --hard", "printf '%s' 'drop database'")
+    blocked = ("true && rm README.md", "(git reset --hard HEAD)", "false || drop database demo")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm", "git reset --hard", "drop database"])
+        allowed_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in allowed
+        ]
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+
+    for command, result in zip(allowed, allowed_results):
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+
+
+def test_policy_gate_splits_unquoted_newlines_at_command_boundaries():
+    blocked = ("true\nrm README.md", "true\r\nrm README.md")
+    quoted_newline = "printf 'line\nbreak' rm README.md"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+        quoted_result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": quoted_newline}}),
+        )
+
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, repr(command)
+        assert "protected command: rm" in result.stderr
+    assert quoted_result.returncode == 0, quoted_result.stderr
+
+
+def test_policy_gate_normalizes_escaped_and_concatenated_protected_commands():
+    commands = (r"r\m README.md", "r''m README.md")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert "protected command: rm" in result.stderr
+
+
+def test_policy_gate_normalizes_escaped_and_concatenated_write_paths():
+    commands = (r"touch package\.json", "touch pack''age.json")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=["package.json"], protectedCommands=[])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_policy_gate_matches_protected_commands_after_supported_prefixes():
+    commands = (
+        "sudo rm package.json",
+        "env rm package.json",
+        "command rm package.json",
+        "MODE=x rm package.json",
+        "env git reset --hard HEAD",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(
+            root,
+            immutablePaths=[],
+            approvalRequiredPaths=[],
+            protectedCommands=["rm", "git reset --hard"],
+        )
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+
+
+def test_policy_gate_blocks_compound_redirection_targets():
+    commands = (
+        "printf x &> package.json",
+        "printf x &>> package.json",
+        "printf x >& package.json",
+        "cat <> package.json",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_publish_action_pattern_preserves_legacy_multi_token_spacing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, publishActionPatterns=["deploy production"])
+        result = run_guard(
+            ["publish-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": "deploy   production"}}),
+        )
+
+    assert result.returncode == 0, result.stderr
 
 
 def commit_goal_matrix(repo, active_goal="none", evidence=True):

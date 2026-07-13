@@ -2704,7 +2704,17 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " hook UserPromptSubmit" in user_prompt_command
     assert " start --root ." not in user_prompt_command
     assert " start --root ." not in user_prompt_command_windows
-    assert "CODEX_PLUGIN_ROOT" in user_prompt_command
+    for entries in hooks.values():
+        hook = entries[0]["hooks"][0]
+        command = hook["command"]
+        command_windows = hook["commandWindows"]
+        assert '${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}' in command
+        assert "$env:PLUGIN_ROOT" in command_windows
+        assert "$env:CLAUDE_PLUGIN_ROOT" in command_windows
+        assert "CODEX_PLUGIN_ROOT" not in command
+        assert "CODEX_PLUGIN_ROOT" not in command_windows
+        assert ":-.}" not in command
+        assert "else { '.' }" not in command_windows
     assert " policy-gate --root . --hook" in pre_tool_command
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
@@ -2875,7 +2885,7 @@ def test_stop_hook_preserves_completion_gate_failure():
         )
         project_root.mkdir()
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(plugin_root)}
+        env = {**os.environ, "PLUGIN_ROOT": str(plugin_root)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2921,7 +2931,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
             text=True,
             capture_output=True,
             cwd=root,
-            env={**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)},
+            env={**os.environ, "PLUGIN_ROOT": str(ROOT)},
         )
 
         assert not marker.exists()
@@ -2940,7 +2950,7 @@ def test_stop_hook_allows_no_active_goal():
         verify = [sys.executable, "-c", "raise SystemExit(0)"]
         assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2975,7 +2985,7 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
         )
         write_file(project_root / "note.txt", "dirty\n")
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2989,16 +2999,38 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
     assert "Fast Lane requires focused verification" in result.stderr
 
 
-def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
+def test_codex_hook_commands_use_official_plugin_root_in_foreign_cwd():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
-    env = {key: value for key, value in os.environ.items() if key != "CODEX_PLUGIN_ROOT"}
+    payloads = {
+        "SessionStart": '{"source":"startup"}',
+        "UserPromptSubmit": read_hook_fixture("user-prompt-goal-matrix.json"),
+        "PreToolUse": "{}",
+        "PostToolUse": "{}",
+        "Stop": "{}",
+    }
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
+    }
+    env["PLUGIN_ROOT"] = str(ROOT)
 
-    def run_commands(foreign_root):
-        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-            command = hooks[event][0]["hooks"][0]["command"]
+    with tempfile.TemporaryDirectory() as tmp:
+        foreign_root = Path(tmp)
+        marker = foreign_root / "foreign-goal-guard-executed"
+        write_file(foreign_root / ".codex-plugin" / "plugin.json", "{}\n")
+        write_file(
+            foreign_root / "core" / "goal_guard.py",
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nraise SystemExit(3)\n",
+        )
+
+        assert set(hooks) == set(payloads)
+        for event, entries in hooks.items():
+            marker.unlink(missing_ok=True)
+            command = entries[0]["hooks"][0]["command"]
             result = subprocess.run(
                 ["/bin/sh", "-c", command],
-                input="{}",
+                input=payloads[event],
                 text=True,
                 capture_output=True,
                 cwd=foreign_root,
@@ -3006,19 +3038,40 @@ def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
             )
 
             assert result.returncode == 0, f"{event}: {result.stderr}"
-            assert "can't open file" not in result.stderr, f"{event}: {result.stderr}"
-            assert "foreign goal guard executed" not in result.stdout + result.stderr, event
+            assert '"hookSpecificOutput"' in result.stdout, f"{event}: real goal guard not reached"
+            assert not marker.exists(), f"{event}: foreign goal guard executed"
 
+
+def test_codex_hook_commands_fail_loudly_without_plugin_root():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
+    }
     with tempfile.TemporaryDirectory() as tmp:
         foreign_root = Path(tmp)
-        assert not (foreign_root / "core" / "goal_guard.py").exists()
-        run_commands(foreign_root)
-
+        marker = foreign_root / "foreign-goal-guard-executed"
+        write_file(foreign_root / ".codex-plugin" / "plugin.json", "{}\n")
         write_file(
             foreign_root / "core" / "goal_guard.py",
-            "import sys\nprint('foreign goal guard executed')\nsys.exit(3)\n",
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nraise SystemExit(3)\n",
         )
-        run_commands(foreign_root)
+
+        for event, entries in hooks.items():
+            marker.unlink(missing_ok=True)
+            result = subprocess.run(
+                ["/bin/sh", "-c", entries[0]["hooks"][0]["command"]],
+                input='{"prompt":"continue G189"}' if event == "UserPromptSubmit" else "{}",
+                text=True,
+                capture_output=True,
+                cwd=foreign_root,
+                env=env,
+            )
+
+            assert result.returncode != 0, event
+            assert "PLUGIN_ROOT" in result.stdout + result.stderr, event
+            assert not marker.exists(), f"{event}: foreign goal guard executed"
 
 
 def test_public_package_copy_uses_generic_scope_language():

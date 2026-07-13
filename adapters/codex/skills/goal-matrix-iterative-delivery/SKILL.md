@@ -5,12 +5,12 @@ description: Use when the user asks for goal matrix delivery, child goals, itera
 
 # Goal Matrix Iterative Delivery
 
-Codex adapter for the Goal Matrix Engineering Protocol. Keep one active goal visible, do the smallest useful slice, verify it against a real truth source, then checkpoint.
+Codex adapter for the Goal Matrix Engineering Protocol. Keep the whole user objective visible in Codex, do the smallest useful repo slice, verify it against a real truth source, then checkpoint.
 
 ## Core Invariants
 
 - `core/protocol.md` is the portable source of truth.
-- Every task declares Initialization types, Project policy impact, Active goal contract, Development flow, Truth source, and Checkpoint plan before edits.
+- Every task declares Initialization types, Project policy impact, Active goal contract (the Repo active goal contract in Codex), Development flow, Truth source, and Checkpoint plan before edits.
 - Prefer existing project code, stdlib, and host behavior before new machinery.
 - Read-only requests stay read-only.
 
@@ -22,16 +22,19 @@ Codex adapter for the Goal Matrix Engineering Protocol. Keep one active goal vis
 - Failure investigation: use `systematic-debugging` before fixes.
 - Completion claim: use `verification-before-completion` before saying done.
 - Publication: use `finishing-a-development-branch` before merge, squash, PR, cleanup, or push.
-- Do not add a new dependency, service, or plugin layer unless the active goal needs it.
+- Do not add a new dependency, service, or plugin layer unless the Repo active goal needs it.
 
-## Visible Goal
+## Goal Lifecycles
 
-- Hooks inject context only; they cannot create the visible Codex goal.
-- If a goal-like prompt needs visible tracking and `create_goal` is available, call `create_goal` once before work.
-- The first substantive response after this skill is active must show a goal matrix or active-goal block before freeform discussion.
-- In clarify/design or read-only work, show the lightweight matrix/active-goal draft first, then continue with discussion.
+- The visible Codex goal is the whole user objective. Read it with `get_goal`; call `create_goal` once when no visible goal exists.
+- Call `update_goal(status=complete)` only after all repo work and final verification for the whole user objective are complete.
+- The Repo active goal is the current `.goal-matrix` `G<n>` slice. Manage it with `goal_guard.py status`, `goal_guard.py start`, and `goal_guard.py checkpoint`.
+- The visible Codex goal and Repo active goal names need not match.
+- A repo checkpoint does not complete the visible Codex goal.
+- The first substantive response after this skill is active must show a goal matrix or Repo active-goal block before freeform discussion.
+- In clarify/design or read-only work, show the lightweight matrix/Repo active-goal draft first, then continue with discussion.
 
-## Active Loop
+## Repo Active Loop
 
 Use this chain:
 
@@ -42,7 +45,7 @@ project_initialization -> work_classification -> design -> design_gate -> execut
 Before editing, state:
 
 ```text
-Active goal: G<n> - <name>
+Repo active goal: G<n> - <name>
 Initialization type: <new-project|iteration|bugfix|legacy-baseline>
 Policy impact: <none|approval-required|blocked>
 Touched paths: <paths or patterns>
@@ -53,19 +56,24 @@ Verification: <smallest real check>
 Development flow: inspect -> failing check -> implement -> verify -> checkpoint
 ```
 
-Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Plain text input creates a blocked draft; do not execute or checkpoint it.
+Call `goal_guard.py start` with structured JSON containing the complete contract fields above. Its state invariants are:
+
+- Plain single-goal input does not write state; hook-style `{ "prompt": ... }` input follows the same rule.
+- Complete structured input repairs an incomplete active goal in place and preserves its id and Pending status.
+- A complete active goal requires checkpoint and is not overwritten by another start.
+- Self-evolution with no pending goal returns complete without creating state or synthesizing a backlog.
 
 ## Loop Engineering
 
 Engineering pass:
 
 ```text
-project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop
+project initialization status -> Repo active goal -> failing check -> minimal change -> verification -> checkpoint commit -> Repo next loop
 ```
 
 - A self-evolution run continues only through pending goals already recorded in state; when none remains, report complete instead of synthesizing a backlog.
-- Recoverable external prerequisites, such as token, cookies, login, or service restart, keep the active goal open with a concrete next action instead of becoming a blocked goal.
-- Fast Lane is available only for trivial typo, copy, or single-function edits with no active goal; keep path/publish policy and focused verification, but skip goal-matrix checkpointing.
+- Recoverable external prerequisites, such as token, cookies, login, or service restart, keep the Repo active goal open with a concrete next action instead of becoming a blocked goal.
+- Fast Lane is available only for trivial typo, copy, or single-function edits with no Repo active goal; keep path/publish policy and focused verification, but skip goal-matrix checkpointing.
 - Before push, preserve verified checkpoint commits and require a clean, integrated branch with closed goals and checkpoint evidence.
 - Final push needs final verification evidence and a clear branch/history state.
 
@@ -73,10 +81,9 @@ project initialization status -> active goal -> failing check -> minimal change 
 
 - `SessionStart`: show initialization status and loop policy.
 - `UserPromptSubmit`: classify the request into `clarify`, `goal_matrix`, `execute`, `verify`, `checkpoint`, or `history`.
-- `PreToolUse`: keep the next action to one active-goal step and block unsafe publish actions.
-- `PostToolUse`: connect tool output to truth source, verification, or next step.
-- `Stop`: require verification, checkpoint/status evidence, and push history policy before completion.
-- Completion needs `Next loop:` with the next pending goal, the still-open active goal's next action, or no remaining goal.
+- `PreToolUse`: run policy and publish gates without injecting model context after a successful tool call.
+- `Stop`: run the completion gate; on success emit only an empty JSON object and no model context.
+- Completion needs `Repo next loop:` (`Next loop` in the portable protocol) with the next pending goal, the still-open Repo active goal's next action, or no remaining goal.
 
 ## User Habits
 
@@ -116,11 +123,11 @@ Keep each development flow concrete:
 Before edits and before the final answer, audit the current plan or summary:
 
 - Missing matrix: create or repair it.
-- Missing active-goal block or development flow: stop and add it.
-- Broad active goal: split it, then do the smallest useful slice.
+- Missing Repo active-goal block or development flow: stop and add it.
+- Broad Repo active goal: split it, then do the smallest useful slice.
 - No truth source: name the authoritative evidence before proceeding.
 - No verification evidence: do not claim completion.
-- New abstraction/service/queue/UI surface: skip unless the active goal needs it now.
+- New abstraction/service/queue/UI surface: skip unless the Repo active goal needs it now.
 
 Local draft check:
 

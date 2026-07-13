@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" hook SessionStart; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; python \"$root\\core\\goal_guard.py\" hook SessionStart }",
+            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then echo \"PLUGIN_ROOT is not set\" >&2; exit 1; fi; if [ ! -f \"$root/.codex-plugin/plugin.json\" ] || [ ! -f \"$root/core/goal_guard.py\" ]; then echo \"invalid PLUGIN_ROOT: $root\" >&2; exit 1; fi; python3 \"$root/core/goal_guard.py\" hook SessionStart; exit 0",
+            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } elseif ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else { Write-Error 'PLUGIN_ROOT is not set'; exit 1 }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { Write-Error \"invalid PLUGIN_ROOT: $root\"; exit 1 }; if (Get-Command python -ErrorAction SilentlyContinue) { python \"$root\\core\\goal_guard.py\" hook SessionStart }",
             "timeout": 5,
             "statusMessage": "Loading goal matrix guard..."
           }
@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" hook UserPromptSubmit; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; $input | python \"$root\\core\\goal_guard.py\" hook UserPromptSubmit }",
+            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then echo \"PLUGIN_ROOT is not set\" >&2; exit 1; fi; if [ ! -f \"$root/.codex-plugin/plugin.json\" ] || [ ! -f \"$root/core/goal_guard.py\" ]; then echo \"invalid PLUGIN_ROOT: $root\" >&2; exit 1; fi; python3 \"$root/core/goal_guard.py\" hook UserPromptSubmit; exit 0",
+            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } elseif ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else { Write-Error 'PLUGIN_ROOT is not set'; exit 1 }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { Write-Error \"invalid PLUGIN_ROOT: $root\"; exit 1 }; if (Get-Command python -ErrorAction SilentlyContinue) { $input | python \"$root\\core\\goal_guard.py\" hook UserPromptSubmit }",
             "timeout": 5,
             "statusMessage": "Checking goal matrix guard..."
           }
@@ -32,23 +32,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; python3 \"$root/core/goal_guard.py\" policy-gate --root . --hook < \"$tmp\"; rc=$?; if [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; python3 \"$root/core/goal_guard.py\" publish-gate --root . --hook < \"$tmp\"; rc=$?; if [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; python3 \"$root/core/goal_guard.py\" hook PreToolUse; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; $tmp = New-TemporaryFile; $input | Set-Content -Path $tmp; Get-Content $tmp | python \"$root\\core\\goal_guard.py\" policy-gate --root . --hook; if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE; Remove-Item $tmp; exit $rc }; Get-Content $tmp | python \"$root\\core\\goal_guard.py\" publish-gate --root . --hook; if ($LASTEXITCODE -ne 0) { $rc = $LASTEXITCODE; Remove-Item $tmp; exit $rc }; python \"$root\\core\\goal_guard.py\" hook PreToolUse; Remove-Item $tmp }",
+            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then echo \"PLUGIN_ROOT is not set\" >&2; exit 1; fi; if [ ! -f \"$root/.codex-plugin/plugin.json\" ] || [ ! -f \"$root/core/goal_guard.py\" ]; then echo \"invalid PLUGIN_ROOT: $root\" >&2; exit 1; fi; tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; python3 \"$root/core/goal_guard.py\" policy-gate --root . --hook < \"$tmp\"; rc=$?; if [ \"$rc\" -ne 0 ]; then exit 2; fi; python3 \"$root/core/goal_guard.py\" publish-gate --root . --hook < \"$tmp\"; rc=$?; if [ \"$rc\" -ne 0 ]; then exit 2; fi; exit 0",
+            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } elseif ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else { Write-Error 'PLUGIN_ROOT is not set'; exit 1 }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { Write-Error \"invalid PLUGIN_ROOT: $root\"; exit 1 }; if (Get-Command python -ErrorAction SilentlyContinue) { $tmp = New-TemporaryFile; $input | Set-Content -Path $tmp; Get-Content $tmp | python \"$root\\core\\goal_guard.py\" policy-gate --root . --hook; if ($LASTEXITCODE -ne 0) { Remove-Item $tmp; exit 2 }; Get-Content $tmp | python \"$root\\core\\goal_guard.py\" publish-gate --root . --hook; if ($LASTEXITCODE -ne 0) { Remove-Item $tmp; exit 2 }; Remove-Item $tmp }",
             "timeout": 5,
-            "statusMessage": "Checking active goal boundary..."
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" hook PostToolUse; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; python \"$root\\core\\goal_guard.py\" hook PostToolUse }",
-            "timeout": 5,
-            "statusMessage": "Recording loop step..."
+            "statusMessage": "Checking repo active goal boundary..."
           }
         ]
       }
@@ -58,8 +45,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CODEX_PLUGIN_ROOT:-.}\"; [ -f \"$root/.codex-plugin/plugin.json\" ] && [ -f \"$root/core/goal_guard.py\" ] || exit 0; python3 \"$root/core/goal_guard.py\" completion-gate --root . >&2; rc=$?; if [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; python3 \"$root/core/goal_guard.py\" hook Stop; exit 0",
-            "commandWindows": "if (Get-Command python -ErrorAction SilentlyContinue) { $root = if ($env:CODEX_PLUGIN_ROOT) { $env:CODEX_PLUGIN_ROOT } else { '.' }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { exit 0 }; python \"$root\\core\\goal_guard.py\" completion-gate --root . 1>&2; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; python \"$root\\core\\goal_guard.py\" hook Stop }",
+            "command": "root=\"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if [ -z \"$root\" ]; then echo \"PLUGIN_ROOT is not set\" >&2; exit 1; fi; if [ ! -f \"$root/.codex-plugin/plugin.json\" ] || [ ! -f \"$root/core/goal_guard.py\" ]; then echo \"invalid PLUGIN_ROOT: $root\" >&2; exit 1; fi; python3 \"$root/core/goal_guard.py\" completion-gate --root . >&2; rc=$?; if [ \"$rc\" -ne 0 ]; then exit 2; fi; python3 \"$root/core/goal_guard.py\" hook Stop; exit 0",
+            "commandWindows": "$root = if ($env:PLUGIN_ROOT) { $env:PLUGIN_ROOT } elseif ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else { Write-Error 'PLUGIN_ROOT is not set'; exit 1 }; if (-not (Test-Path \"$root\\.codex-plugin\\plugin.json\") -or -not (Test-Path \"$root\\core\\goal_guard.py\")) { Write-Error \"invalid PLUGIN_ROOT: $root\"; exit 1 }; if (Get-Command python -ErrorAction SilentlyContinue) { python \"$root\\core\\goal_guard.py\" completion-gate --root . 1>&2; if ($LASTEXITCODE -ne 0) { exit 2 }; python \"$root\\core\\goal_guard.py\" hook Stop }",
             "timeout": 30,
             "statusMessage": "Checking loop completion..."
           }

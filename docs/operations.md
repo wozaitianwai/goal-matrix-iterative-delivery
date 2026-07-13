@@ -38,7 +38,7 @@ Every later `start`, `checkpoint`, or `prune` regenerates `goal-matrix.md`, `arc
 
 ## Debug
 
-- Missing hook output: confirm `CODEX_PLUGIN_ROOT` points at this plugin and that the hook is trusted by Codex.
+- Missing hook output: confirm the installed runtime provides `PLUGIN_ROOT` (or compatibility `CLAUDE_PLUGIN_ROOT`) and that the hook is trusted by Codex.
 - Prompt noise: check `.goal-matrix/project-policy.json`; default `triggerMode` is `narrow`, while `strict` enables broad engineering prompts.
 - Policy not blocking: run `goal_guard.py doctor --fix --root .`, then test `policy-gate --root . --hook` with the tool payload.
 - Push blocked: run `goal_guard.py publish-gate --root .` and inspect active goal, checkpoint evidence, worktree state, upstream, and ahead/behind count.

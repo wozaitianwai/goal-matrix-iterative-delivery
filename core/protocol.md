@@ -78,7 +78,12 @@ The command creates missing `.goal-matrix` files from `core/templates/`, creates
 
 After initialization, fill `.goal-matrix/project-context.md` with the project charter, work classification, and lifecycle support cycle. This is the project立项 record: idea source, user/operator, success criteria, support horizon, retirement trigger, work type, risk, primary surface, approval needs, and the stage-by-stage support loop.
 
-`start` accepts the structured JSON contract above. Plain text remains a compatibility path that creates an incomplete draft; audit and checkpoint block that draft until the JSON state is repaired.
+`start` accepts the structured JSON contract above and enforces these state transitions:
+
+- Plain single-goal input does not write state; hook-style `{ "prompt": ... }` input follows the same rule.
+- Complete structured input repairs an incomplete active goal in place and preserves its id and Pending status.
+- A complete active goal requires checkpoint and is not overwritten by another `start`.
+- Self-evolution with no pending goal returns complete without creating state or synthesizing a backlog.
 
 ## Active goal contract
 

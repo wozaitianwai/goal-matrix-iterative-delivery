@@ -5,7 +5,7 @@ Codex is the only lifecycle adapter wired in this package.
 ## Install From GitHub
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.13-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.14-codex.3
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 

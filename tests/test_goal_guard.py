@@ -21,7 +21,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.13-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.14-codex.3"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -49,8 +49,8 @@ def run_guard(args, text="", cwd=ROOT, env=None):
     )
 
 
-def run_structured_start(root, title, verification="python3 --version"):
-    contract = {
+def structured_start_contract(title, verification="python3 --version"):
+    return {
         "userOutcome": title,
         "engineeringSlice": f"Implement {title}",
         "initializationType": "iteration",
@@ -62,6 +62,10 @@ def run_structured_start(root, title, verification="python3 --version"):
         "verification": verification,
         "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
     }
+
+
+def run_structured_start(root, title, verification="python3 --version"):
+    contract = structured_start_contract(title, verification)
     return run_guard(["start", "--root", str(root)], json.dumps(contract))
 
 
@@ -129,7 +133,7 @@ def test_core_protocol_defines_loop_engineering_contract():
         assert phrase in text
 
 
-def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
+def test_start_docs_require_structured_contract_and_recovery_invariants():
     protocol = read_text("core/protocol.md")
     skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
     english = read_text("README.md")
@@ -149,9 +153,17 @@ def test_start_docs_require_structured_contract_and_mark_plain_text_as_draft():
     ):
         assert f'"{field}"' in protocol
     assert "structured JSON" in skill
-    assert "plain text" in skill.lower() and "draft" in skill.lower()
     assert '"userOutcome"' in english
     assert '"userOutcome"' in chinese
+    for text in (protocol, skill, english, chinese):
+        lowered = text.lower()
+        for invariant in (
+            "plain single-goal input does not write state",
+            "complete structured input repairs an incomplete active goal in place and preserves its id",
+            "a complete active goal requires checkpoint and is not overwritten",
+            "self-evolution with no pending goal returns complete",
+        ):
+            assert invariant in lowered
 
 
 def test_core_templates_exist():
@@ -446,21 +458,27 @@ def test_native_pre_push_boundary_is_documented():
 
 def test_threat_model_documents_enforcement_and_boundaries():
     text = read_text("docs/threat-model.md")
+    operations = read_text("docs/operations.md")
     for phrase in (
         "What It Enforces",
         "What It Does Not Enforce",
-        "Fail-Open Boundaries",
+        "Failure Boundaries",
         "Webhook Egress",
         "PreToolUse",
         "Stop",
         "policy-gate",
         "publish-gate",
         "not a security sandbox",
-        "CODEX_PLUGIN_ROOT",
+        "PLUGIN_ROOT",
         "https://",
         "allowedHosts",
     ):
         assert phrase in text
+    assert "CODEX_PLUGIN_ROOT" not in text + operations
+    assert "Hook bootstrap fails closed" in text
+    assert "Invalid project policy fails closed" in text
+    assert "Missing project policy fails open" in text
+    assert "`PLUGIN_ROOT`" in operations
 
 
 def test_install_adapter_rejects_non_hook_instruction_adapters():
@@ -2345,7 +2363,7 @@ def test_session_start_injects_fusion_workflow_and_generic_routing():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "Fusion workflow" in context
-    assert "Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Checkpoint" in context
+    assert "Intake -> Matrix -> Repo active goal -> Development flow -> Execute -> Verify -> Checkpoint" in context
     assert "Work routing" in context
     assert "Product/UI" in context
     assert "Data/API" in context
@@ -2390,11 +2408,69 @@ def test_session_start_injects_lifecycle_cli_commands():
 
 def test_hook_context_explains_visible_codex_goal_boundary():
     result = run_guard(["hook", "SessionStart"], "{}")
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
 
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "create_goal" in context
     assert "visible Codex goal" in context
+    for phrase in (
+        "visible Codex goal is the whole user objective",
+        "Read it with `get_goal`",
+        "call `create_goal` once when no visible goal exists",
+        "`update_goal(status=complete)` only after all repo work and final verification",
+        "Repo active goal is the current `.goal-matrix` `G<n>` slice",
+        "`goal_guard.py status`",
+        "`goal_guard.py start`",
+        "`goal_guard.py checkpoint`",
+        "names need not match",
+        "A repo checkpoint does not complete the visible Codex goal",
+    ):
+        assert phrase in skill
+
+
+def test_model_context_and_skill_use_repo_goal_terminology_without_changing_visible_goal():
+    session = hook_context(json.loads(run_guard(["hook", "SessionStart"], "{}").stdout))
+    execute = hook_context(
+        json.loads(run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "implement active goal"})).stdout)
+    )
+    checkpoint = hook_context(
+        json.loads(run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "checkpoint active goal"})).stdout)
+    )
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
+
+    for phrase in (
+        "project initialization status -> Repo active goal -> failing check",
+        "checkpoint commit -> Repo next loop",
+        "expose one Repo active goal",
+        "Intake -> Matrix -> Repo active goal",
+        "every Repo active goal names paths",
+        "goal matrix or Repo active-goal block",
+        "Repo active goal must include",
+    ):
+        assert phrase in session
+    for phrase in (
+        "Minimum Repo active-goal block:",
+        "Repo active goal: G<n> - <name>",
+        "one Repo active goal only",
+    ):
+        assert phrase in execute
+    assert "keep the Repo next loop explicit" in checkpoint
+
+    for phrase in (
+        "Active goal contract (the Repo active goal contract in Codex)",
+        "## Repo Active Loop",
+        "Repo active goal: G<n> - <name>",
+        "project initialization status -> Repo active goal -> failing check",
+        "checkpoint commit -> Repo next loop",
+        "Completion needs `Repo next loop:`",
+        "`Next loop` in the portable protocol",
+        "still-open Repo active goal's next action",
+    ):
+        assert phrase in skill
+    for text in (session, skill):
+        assert "visible Codex goal" in text
+    assert "The visible Codex goal is the whole user objective" in skill
 
 
 def test_session_start_requires_matrix_first_response_contract():
@@ -2403,7 +2479,7 @@ def test_session_start_requires_matrix_first_response_contract():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "First substantive response" in context
-    assert "goal matrix or active-goal block" in context
+    assert "goal matrix or Repo active-goal block" in context
     assert "freeform discussion" in context
 
 
@@ -2414,7 +2490,7 @@ def test_plugin_skill_and_default_prompt_require_matrix_first_response():
     default_prompt = " ".join(manifest["interface"]["defaultPrompt"])
 
     assert "first substantive response" in skill_text.lower()
-    assert "goal matrix or active-goal block" in skill_text
+    assert "goal matrix or Repo active-goal block" in skill_text
     assert "first substantive response" in agent_text.lower()
     assert "first substantive response" in default_prompt.lower()
 
@@ -2427,7 +2503,7 @@ def test_user_prompt_submit_injects_goal_self_correction_for_goal_work():
     payload = json.loads(result.stdout)
     context = hook_context(payload)
     assert "Goal self-correction" in context
-    assert "Active goal" in context
+    assert "Repo active goal" in context
     assert "Development flow" in context
     assert "truth source" in context
 
@@ -2511,38 +2587,23 @@ def test_user_prompt_submit_classifies_execute_request_as_execute_phase():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "Loop phase: execute" in context
-    assert "one active goal only" in context
+    assert "one Repo active goal only" in context
 
 
-def test_lifecycle_hooks_inject_single_step_boundaries():
-    for event, phrase in (
-        ("PreToolUse", "Before tool use"),
-        ("PostToolUse", "After tool use"),
-        ("Stop", "Before completion"),
-    ):
-        result = run_guard(["hook", event], "{}")
-        assert result.returncode == 0, result.stderr
-        context = hook_context(json.loads(result.stdout))
-        assert phrase in context
-        assert "one loop step" in context
+def test_non_prompt_hook_cli_never_emits_model_context():
+    results = {event: run_guard(["hook", event], "{}") for event in ("PreToolUse", "PostToolUse", "Stop")}
+
+    assert results["PreToolUse"].returncode == 0, results["PreToolUse"].stderr
+    assert results["PreToolUse"].stdout == ""
+    assert results["PostToolUse"].returncode == 0, results["PostToolUse"].stderr
+    assert results["PostToolUse"].stdout == ""
+    assert results["Stop"].returncode == 0, results["Stop"].stderr
+    assert results["Stop"].stdout == "{}\n"
+    assert json.loads(results["Stop"].stdout) == {}
+    assert all("additionalContext" not in result.stdout for result in results.values())
 
 
-def test_lifecycle_hooks_include_fast_lane_boundary():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        write_file(root / ".goal-matrix" / "goals" / "active-goal.md", "Active goal: none\n")
-        results = [run_guard(["hook", event], "{}", cwd=tmp) for event in ("PreToolUse", "PostToolUse", "Stop")]
-
-    for result in results:
-        assert result.returncode == 0, result.stderr
-        context = hook_context(json.loads(result.stdout))
-        assert "Fast Lane" in context
-        assert "trivial" in context
-        assert "no active goal" in context
-
-
-def test_lifecycle_hooks_include_resume_status_context():
+def test_session_and_triggered_prompt_hooks_include_repo_status_context():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
         active_goal = next(
@@ -2550,28 +2611,19 @@ def test_lifecycle_hooks_include_resume_status_context():
             for line in (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text().splitlines()
             if line.startswith("Active goal:")
         )
-        results = [run_guard(["hook", event], "{}", cwd=tmp) for event in ("PreToolUse", "PostToolUse", "Stop")]
+        results = (
+            run_guard(["hook", "SessionStart"], "{}", cwd=tmp),
+            run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "continue goal matrix"}), cwd=tmp),
+        )
 
     for result in results:
         assert result.returncode == 0, result.stderr
         context = hook_context(json.loads(result.stdout))
         assert "Project initialization status" in context
-        assert f"Active goal: {active_goal}" in context
-        assert "Next loop:" in context
+        assert f"Repo active goal: {active_goal}" in context
+        assert "Repo next loop:" in context
         assert "Goal matrix:" in context
         assert "child goals" in context
-
-
-def test_stop_hook_demands_next_loop_handoff():
-    result = run_guard(["hook", "Stop"], "{}")
-
-    assert result.returncode == 0, result.stderr
-    context = hook_context(json.loads(result.stdout))
-    assert "Next loop:" in context
-    assert "select next pending goal" in context
-    assert "continue with it before final completion" in context
-    assert "mark blocked" not in context
-    assert "keep the active goal open" in context
 
 
 def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
@@ -2618,7 +2670,8 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
     assert user_prompt.returncode == 0, user_prompt.stderr
     assert "Goal self-correction" in hook_context(json.loads(user_prompt.stdout))
     assert stop.returncode == 0, stop.stderr
-    assert "Before completion" in hook_context(json.loads(stop.stdout))
+    assert json.loads(stop.stdout) == {}
+    assert "additionalContext" not in stop.stdout
     assert immutable.returncode == 1
     assert "immutable path" in immutable.stderr
     assert protected.returncode == 1
@@ -2687,10 +2740,87 @@ def test_user_prompt_submit_triggers_for_self_evolution_runs():
     assert "never synthesize work" in context
 
 
-def test_codex_hook_config_wires_loop_events():
+def test_codex_hook_config_keeps_pre_gates_and_removes_post_tool_hook():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
-    for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-        assert event in hooks
+    pre_tool = hooks["PreToolUse"][0]["hooks"][0]
+    pre_tool_command = pre_tool["command"]
+    pre_tool_command_windows = pre_tool["commandWindows"]
+
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"}
+    assert " policy-gate --root . --hook" in pre_tool_command
+    assert " publish-gate --root . --hook" in pre_tool_command
+    assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
+    assert pre_tool_command_windows.index(" policy-gate --root . --hook") < pre_tool_command_windows.index(" publish-gate --root . --hook")
+    assert " hook PreToolUse" not in pre_tool_command
+    assert " hook PreToolUse" not in pre_tool_command_windows
+    assert pre_tool_command.count('if [ "$rc" -ne 0 ]; then exit 2; fi') == 2
+    assert pre_tool_command_windows.count("Remove-Item $tmp; exit 2") == 2
+    assert pre_tool["statusMessage"] == "Checking repo active goal boundary..."
+
+
+def test_pre_tool_hook_translates_policy_denial_to_exit_2():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm package.json"}})
+    env = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+    env["PLUGIN_ROOT"] = str(ROOT)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        make_policy_project(
+            project_root,
+            approvalRequiredPaths=["package.json"],
+            protectedCommands=["rm"],
+        )
+        result = subprocess.run(
+            ["/bin/sh", "-c", pre_tool_command],
+            input=payload,
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env=env,
+        )
+
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert "policy gate blocked: package.json requires approval" in result.stderr
+    assert "policy gate blocked: protected command: rm" in result.stderr
+
+
+def test_pre_tool_hook_translates_publish_denial_to_exit_2():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        plugin_root = root / "plugin"
+        project_root = root / "project"
+        marker = plugin_root / "pre-tool-called"
+        write_file(plugin_root / ".codex-plugin" / "plugin.json", "{}\n")
+        write_file(
+            plugin_root / "core" / "goal_guard.py",
+            "import pathlib, sys\n"
+            "if 'policy-gate' in sys.argv:\n"
+            "    raise SystemExit(0)\n"
+            "if 'publish-gate' in sys.argv:\n"
+            "    print('publish gate denied marker', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
+            f"pathlib.Path({str(marker)!r}).write_text('called')\n",
+        )
+        project_root.mkdir()
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status --short"}})
+
+        result = subprocess.run(
+            ["/bin/sh", "-c", pre_tool_command],
+            input=payload,
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={**os.environ, "PLUGIN_ROOT": str(plugin_root)},
+        )
+
+        assert result.returncode == 2, (result.returncode, result.stderr)
+        assert "publish gate denied marker" in result.stderr
+        assert not marker.exists()
 
 
 def test_codex_hook_config_invokes_lifecycle_commands():
@@ -2698,23 +2828,42 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     user_prompt_command = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
     user_prompt_command_windows = hooks["UserPromptSubmit"][0]["hooks"][0]["commandWindows"]
     pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    pre_tool_command_windows = hooks["PreToolUse"][0]["hooks"][0]["commandWindows"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
     stop_command_windows = hooks["Stop"][0]["hooks"][0]["commandWindows"]
 
     assert " hook UserPromptSubmit" in user_prompt_command
     assert " start --root ." not in user_prompt_command
     assert " start --root ." not in user_prompt_command_windows
-    assert "CODEX_PLUGIN_ROOT" in user_prompt_command
+    for entries in hooks.values():
+        hook = entries[0]["hooks"][0]
+        command = hook["command"]
+        command_windows = hook["commandWindows"]
+        assert '${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}' in command
+        assert "$env:PLUGIN_ROOT" in command_windows
+        assert "$env:CLAUDE_PLUGIN_ROOT" in command_windows
+        assert "CODEX_PLUGIN_ROOT" not in command
+        assert "CODEX_PLUGIN_ROOT" not in command_windows
+        assert ":-.}" not in command
+        assert "else { '.' }" not in command_windows
     assert " policy-gate --root . --hook" in pre_tool_command
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
-    assert " hook PreToolUse" in pre_tool_command
+    assert "PostToolUse" not in hooks
+    assert " hook PreToolUse" not in pre_tool_command
+    assert " hook PreToolUse" not in pre_tool_command_windows
+    assert pre_tool_command.count('if [ "$rc" -ne 0 ]; then exit 2; fi') == 2
+    assert 'exit "$rc"' not in pre_tool_command
+    assert pre_tool_command_windows.count("Remove-Item $tmp; exit 2") == 2
+    assert "exit $rc" not in pre_tool_command_windows
     assert " completion-gate --root ." in stop_command
     assert " --verify" not in stop_command
     assert " active-verify" not in stop_command
     assert "scripts/loop_verify.py" not in stop_command
-    assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
-    assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
+    assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit 2; fi' in stop_command
+    assert 'exit "$rc"' not in stop_command
+    assert "if ($LASTEXITCODE -ne 0) { exit 2 }" in stop_command_windows
+    assert "exit $LASTEXITCODE" not in stop_command_windows
     assert " hook Stop" in stop_command
 
 
@@ -2792,7 +2941,7 @@ def test_active_verify_uses_state_json_instead_of_edited_markdown():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Verify JSON contract").returncode == 0
+        assert run_structured_start(tmp, "Verify JSON contract").returncode == 0
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state_goal = state["goalMatrix"]["childGoals"][0]
@@ -2827,7 +2976,7 @@ def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "JSON boundary").returncode == 0
+        assert run_structured_start(tmp, "JSON boundary").returncode == 0
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state_goal = state["goalMatrix"]["childGoals"][0]
@@ -2841,7 +2990,7 @@ def test_audit_rejects_active_goal_projection_drift_and_status_uses_state():
         write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
         active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
         write_file(active_path, active_path.read_text(encoding="utf-8").replace(
-            "Delivery boundary: one bounded child goal from the current prompt",
+            "Delivery boundary: JSON boundary only",
             "Delivery boundary: edited by hand",
         ))
 
@@ -2869,13 +3018,14 @@ def test_stop_hook_preserves_completion_gate_failure():
             plugin_root / "core" / "goal_guard.py",
             "import pathlib, sys\n"
             "if 'completion-gate' in sys.argv:\n"
-            "    raise SystemExit(7)\n"
+            "    print('completion gate denied marker', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
             "if sys.argv[-2:] == ['hook', 'Stop']:\n"
             f"    pathlib.Path({str(marker)!r}).write_text('called')\n",
         )
         project_root.mkdir()
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(plugin_root)}
+        env = {**os.environ, "PLUGIN_ROOT": str(plugin_root)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2885,7 +3035,9 @@ def test_stop_hook_preserves_completion_gate_failure():
             env=env,
         )
 
-        assert result.returncode == 7
+        assert result.returncode == 2, (result.returncode, result.stderr)
+        assert "completion gate denied marker" in result.stderr
+        assert result.stdout == ""
         assert not marker.exists()
 
 
@@ -2897,7 +3049,7 @@ def test_stop_hook_never_executes_active_goal_verification():
         root = Path(tmp)
         marker = root / "stop-side-effect"
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Unsafe verification").returncode == 0
+        assert run_structured_start(tmp, "Unsafe verification").returncode == 0
         write_file(
             root / ".goal-matrix" / "goals" / "active-goal.md",
             f"""# Active Goal
@@ -2921,7 +3073,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
             text=True,
             capture_output=True,
             cwd=root,
-            env={**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)},
+            env={**os.environ, "PLUGIN_ROOT": str(ROOT)},
         )
 
         assert not marker.exists()
@@ -2929,7 +3081,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
         assert "checkpoint" in result.stderr.lower()
 
 
-def test_stop_hook_allows_no_active_goal():
+def test_stop_hook_success_returns_empty_json_object():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -2940,7 +3092,7 @@ def test_stop_hook_allows_no_active_goal():
         verify = [sys.executable, "-c", "raise SystemExit(0)"]
         assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2951,9 +3103,54 @@ def test_stop_hook_allows_no_active_goal():
         )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout == "{}\n"
+    assert json.loads(result.stdout) == {}
+    assert "additionalContext" not in result.stdout
 
 
-def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
+def test_twenty_tool_calls_emit_zero_additional_context():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status --short"}})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Finish aggregate loop").returncode == 0
+        verify = [sys.executable, "-c", "raise SystemExit(0)"]
+        assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
+        pre_results = [
+            subprocess.run(
+                ["/bin/sh", "-c", pre_tool_command],
+                input=payload,
+                text=True,
+                capture_output=True,
+                cwd=tmp,
+                env=env,
+            )
+            for _ in range(20)
+        ]
+        stop = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="{}",
+            text=True,
+            capture_output=True,
+            cwd=tmp,
+            env=env,
+        )
+
+    assert "PostToolUse" not in hooks
+    assert all(result.returncode == 0 for result in pre_results)
+    assert sum(len(result.stdout.encode()) for result in pre_results) == 0
+    assert stop.returncode == 0, stop.stderr
+    assert len(stop.stdout.encode()) == 3
+    assert json.loads(stop.stdout) == {}
+    aggregate = "".join(result.stdout for result in pre_results) + stop.stdout
+    assert aggregate.count("additionalContext") == 0
+
+
+def test_stop_hook_allows_preexisting_dirty_no_active_goal():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -2965,6 +3162,14 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
             project_root / ".goal-matrix" / "goals" / "active-goal.md",
             "Active goal: none\n",
         )
+        write_file(
+            project_root / ".goal-matrix" / "goals" / "goal-matrix.md",
+            """# Goal Matrix
+
+| Goal | User outcome | Engineering slice | Truth source | Verification | Status |
+| --- | --- | --- | --- | --- | --- |
+""",
+        )
         subprocess.run(["git", "add", "."], cwd=project_root, check=True, capture_output=True, text=True)
         subprocess.run(
             ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "baseline"],
@@ -2975,7 +3180,7 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
         )
         write_file(project_root / "note.txt", "dirty\n")
 
-        env = {**os.environ, "CODEX_PLUGIN_ROOT": str(ROOT)}
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
         result = subprocess.run(
             ["/bin/sh", "-c", stop_command],
             input="{}",
@@ -2985,20 +3190,42 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
             env=env,
         )
 
-    assert result.returncode == 1
-    assert "Fast Lane requires focused verification" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+    assert "Fast Lane" not in result.stderr
 
 
-def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
+def test_codex_hook_commands_use_official_plugin_root_in_foreign_cwd():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
-    env = {key: value for key, value in os.environ.items() if key != "CODEX_PLUGIN_ROOT"}
+    payloads = {
+        "SessionStart": '{"source":"startup"}',
+        "UserPromptSubmit": read_hook_fixture("user-prompt-goal-matrix.json"),
+        "PreToolUse": "{}",
+        "Stop": "{}",
+    }
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
+    }
+    env["PLUGIN_ROOT"] = str(ROOT)
 
-    def run_commands(foreign_root):
-        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-            command = hooks[event][0]["hooks"][0]["command"]
+    with tempfile.TemporaryDirectory() as tmp:
+        foreign_root = Path(tmp)
+        marker = foreign_root / "foreign-goal-guard-executed"
+        write_file(foreign_root / ".codex-plugin" / "plugin.json", "{}\n")
+        write_file(
+            foreign_root / "core" / "goal_guard.py",
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nraise SystemExit(3)\n",
+        )
+
+        assert set(hooks) == set(payloads)
+        for event, entries in hooks.items():
+            marker.unlink(missing_ok=True)
+            command = entries[0]["hooks"][0]["command"]
             result = subprocess.run(
                 ["/bin/sh", "-c", command],
-                input="{}",
+                input=payloads[event],
                 text=True,
                 capture_output=True,
                 cwd=foreign_root,
@@ -3006,19 +3233,70 @@ def test_codex_hook_commands_fail_open_without_plugin_root_in_foreign_cwd():
             )
 
             assert result.returncode == 0, f"{event}: {result.stderr}"
-            assert "can't open file" not in result.stderr, f"{event}: {result.stderr}"
-            assert "foreign goal guard executed" not in result.stdout + result.stderr, event
+            if event in ("SessionStart", "UserPromptSubmit"):
+                assert '"hookSpecificOutput"' in result.stdout, f"{event}: real goal guard not reached"
+            elif event == "PreToolUse":
+                assert result.stdout == ""
+            else:
+                assert result.stdout == "{}\n"
+            assert not marker.exists(), f"{event}: foreign goal guard executed"
 
+
+def test_codex_hook_commands_fail_loudly_without_plugin_root():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
+    }
     with tempfile.TemporaryDirectory() as tmp:
         foreign_root = Path(tmp)
-        assert not (foreign_root / "core" / "goal_guard.py").exists()
-        run_commands(foreign_root)
-
+        marker = foreign_root / "foreign-goal-guard-executed"
+        write_file(foreign_root / ".codex-plugin" / "plugin.json", "{}\n")
         write_file(
             foreign_root / "core" / "goal_guard.py",
-            "import sys\nprint('foreign goal guard executed')\nsys.exit(3)\n",
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nraise SystemExit(3)\n",
         )
-        run_commands(foreign_root)
+
+        for event, entries in hooks.items():
+            marker.unlink(missing_ok=True)
+            result = subprocess.run(
+                ["/bin/sh", "-c", entries[0]["hooks"][0]["command"]],
+                input='{"prompt":"continue G189"}' if event == "UserPromptSubmit" else "{}",
+                text=True,
+                capture_output=True,
+                cwd=foreign_root,
+                env=env,
+            )
+
+            assert result.returncode != 0, event
+            assert "PLUGIN_ROOT" in result.stdout + result.stderr, event
+            assert not marker.exists(), f"{event}: foreign goal guard executed"
+
+
+def test_codex_hook_commands_fail_loudly_for_invalid_plugin_root():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    with tempfile.TemporaryDirectory() as tmp:
+        invalid_root = Path(tmp) / "missing-plugin"
+        env = {**os.environ, "PLUGIN_ROOT": str(invalid_root)}
+
+        for event, entries in hooks.items():
+            hook = entries[0]["hooks"][0]
+            result = subprocess.run(
+                ["/bin/sh", "-c", hook["command"]],
+                input='{"prompt":"continue"}' if event == "UserPromptSubmit" else "{}",
+                text=True,
+                capture_output=True,
+                cwd=tmp,
+                env=env,
+            )
+
+            assert result.returncode != 0, event
+            assert "invalid PLUGIN_ROOT" in result.stdout + result.stderr, event
+            assert "invalid PLUGIN_ROOT" in hook["commandWindows"], event
+            assert hook["commandWindows"].index("if (-not (Test-Path") < hook["commandWindows"].index(
+                "if (Get-Command python"
+            ), event
 
 
 def test_public_package_copy_uses_generic_scope_language():
@@ -3503,8 +3781,18 @@ def test_policy_gate_shell_literal_path_requires_approval_and_documents_dynamic_
     assert json.loads(denied.stdout)["paths"] == [".env"]
     assert ".env requires approval" in denied.stderr
     assert approved.returncode == 0, approved.stderr
-    assert "literal shell path tokens" in threat_model
-    assert "dynamic shell expansion" in threat_model
+    assert "literal shell write targets" in threat_model
+    for phrase in (
+        "variables",
+        "command substitution",
+        "aliases",
+        "eval",
+        "bash -c",
+        "interpreter semantics",
+        "dynamic paths",
+        "wrapper option grammar",
+    ):
+        assert phrase in threat_model
 
 
 def test_policy_gate_rejects_unscoped_payload_approval():
@@ -3611,6 +3899,312 @@ def test_policy_gate_blocks_protected_commands_from_tool_payload():
     assert result.returncode == 1
     assert "protected command" in result.stderr
     assert "git reset --hard" in result.stderr
+
+
+def test_policy_gate_allows_protected_command_without_write_target():
+    commands = ("rm --help", "rm --version", "rm -f")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm"])
+        results = {
+            command: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        }
+
+    for command, result in results.items():
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_treats_single_dash_as_rm_operand():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": "rm -"}}),
+        )
+
+    assert result.returncode == 1, result.stderr
+    assert "protected command: rm" in result.stderr
+
+
+def test_policy_gate_ignores_protected_command_token_in_read_only_arguments():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm"])
+        command = "rg rm README.md"
+        result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook", "--debug"],
+            json.dumps({"tool_input": {"cmd": command}}),
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_allows_read_only_access_to_approval_required_path():
+    commands = (
+        "cat package.json",
+        "file package.json",
+        "grep name package.json",
+        "head package.json",
+        "ls package.json",
+        "nl package.json",
+        "pwd package.json",
+        "readlink package.json",
+        "realpath package.json",
+        "rg name package.json",
+        "sed -n '1,20p' package.json",
+        "stat package.json",
+        "tail package.json",
+        "wc package.json",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        results = {
+            command: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        }
+
+    for command, result in results.items():
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout) == {"paths": [], "commands": [command]}
+
+
+def test_policy_gate_blocks_explicit_writes_to_approval_required_path():
+    payloads = {
+        "rm operand": {"tool_input": {"cmd": "rm package.json"}},
+        "sed in-place": {"tool_input": {"cmd": "sed -i.bak 's/x/y/' package.json"}},
+        "output redirect": {"tool_input": {"cmd": "printf x > package.json"}},
+        "apply patch": {
+            "tool_input": {
+                "patch": "*** Begin Patch\n*** Update File: package.json\n@@\n-old\n+new\n*** End Patch\n"
+            }
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"], protectedCommands=["rm"])
+        results = {
+            name: run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps(payload),
+            )
+            for name, payload in payloads.items()
+        }
+
+    for name, result in results.items():
+        assert result.returncode == 1, f"{name}: {result.stderr}"
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_policy_gate_matches_protected_commands_only_at_segment_command_position():
+    allowed = ("echo rm README.md", "echo git reset --hard", "printf '%s' 'drop database'")
+    blocked = ("true && rm README.md", "(git reset --hard HEAD)", "false || drop database demo")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, protectedCommands=["rm", "git reset --hard", "drop database"])
+        allowed_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in allowed
+        ]
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+
+    for command, result in zip(allowed, allowed_results):
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+
+
+def test_policy_gate_splits_unquoted_newlines_at_command_boundaries():
+    blocked = ("true\nrm README.md", "true\r\nrm README.md")
+    quoted_newline = "printf 'line\nbreak' rm README.md"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+        quoted_result = run_guard(
+            ["policy-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": quoted_newline}}),
+        )
+
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, repr(command)
+        assert "protected command: rm" in result.stderr
+    assert quoted_result.returncode == 0, quoted_result.stderr
+
+
+def test_policy_gate_normalizes_escaped_and_concatenated_protected_commands():
+    commands = (r"r\m README.md", "r''m README.md")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=[], protectedCommands=["rm"])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert "protected command: rm" in result.stderr
+
+
+def test_policy_gate_normalizes_escaped_and_concatenated_write_paths():
+    commands = (r"touch package\.json", "touch pack''age.json")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, immutablePaths=[], approvalRequiredPaths=["package.json"], protectedCommands=[])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_policy_gate_matches_protected_commands_after_supported_prefixes():
+    commands = (
+        "sudo rm package.json",
+        "env rm package.json",
+        "command rm package.json",
+        "MODE=x rm package.json",
+        "env git reset --hard HEAD",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(
+            root,
+            immutablePaths=[],
+            approvalRequiredPaths=[],
+            protectedCommands=["rm", "git reset --hard"],
+        )
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+
+
+def test_policy_gate_closes_protected_command_position_bypasses():
+    blocked = (
+        "2>/dev/null rm README.md",
+        "X=1 2>/dev/null /bin/rm README.md",
+        "env 2>/dev/null /bin/rm README.md",
+        "sudo 2>/dev/null /bin/rm README.md",
+        "command 2>/dev/null /bin/rm README.md",
+        "/bin/rm README.md",
+        "git -C . reset --hard HEAD",
+        "X=1 2>/dev/null git -C . reset --hard HEAD",
+    )
+    allowed = (
+        "echo 2>/dev/null rm README.md",
+        "/bin/echo rm README.md",
+        "git -C . status",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(
+            root,
+            immutablePaths=[],
+            approvalRequiredPaths=[],
+            protectedCommands=["rm", "git reset --hard"],
+        )
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+        allowed_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in allowed
+        ]
+
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+    for command, result in zip(allowed, allowed_results):
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+
+
+def test_policy_gate_blocks_compound_redirection_targets():
+    commands = (
+        "printf x &> package.json",
+        "printf x &>> package.json",
+        "printf x >& package.json",
+        "cat <> package.json",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, approvalRequiredPaths=["package.json"])
+        results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook", "--debug"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in commands
+        ]
+
+    for command, result in zip(commands, results):
+        assert result.returncode == 1, f"{command}: {result.stderr}"
+        assert json.loads(result.stdout)["paths"] == ["package.json"]
+        assert "package.json requires approval" in result.stderr
+
+
+def test_publish_action_pattern_preserves_legacy_multi_token_spacing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(root, publishActionPatterns=["deploy production"])
+        result = run_guard(
+            ["publish-gate", "--root", str(root), "--hook"],
+            json.dumps({"tool_input": {"cmd": "deploy   production"}}),
+        )
+
+    assert result.returncode == 0, result.stderr
 
 
 def commit_goal_matrix(repo, active_goal="none", evidence=True):
@@ -3948,22 +4542,24 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
     assert json.loads(result.stdout)["nextLoop"] is None
 
 
-def test_start_command_creates_pending_active_goal_from_prompt():
+def test_plain_single_goal_start_rejects_without_state_write():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], "goal iteration still does not start")
-        status_result = run_guard(["status", "--root", tmp])
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
 
-    assert started.returncode == 0, started.stderr
-    payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - goal iteration still does not start"
-
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - goal iteration still does not start"
-    assert status["goalMatrix"]["pending"] == 1
-    assert status["goalMatrix"]["childGoals"][0]["id"] == "G1"
-    assert status["goalMatrix"]["childGoals"][0]["status"] == "Pending"
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+    assert status["activeGoal"] is None
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
 
 
 def test_start_command_accepts_complete_structured_contract():
@@ -3997,32 +4593,76 @@ def test_start_command_accepts_complete_structured_contract():
     assert audit.returncode == 0, audit.stderr
 
 
-def test_plain_start_creates_blocked_draft_contract():
+def test_structured_start_repairs_incomplete_active_in_place():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        legacy = json.loads(state_path.read_text(encoding="utf-8"))
+        legacy["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(legacy, ensure_ascii=False, indent=2) + "\n")
 
-        started = run_guard(["start", "--root", tmp], "Unclear draft")
-        audit = run_guard(["audit", "--root", tmp])
-        checkpoint = run_guard(
-            [
-                "checkpoint",
-                "--root",
-                tmp,
-                "--",
-                sys.executable,
-                "-c",
-                "from pathlib import Path; Path('draft-ran').write_text('wrong')",
-            ]
+        started = run_guard(
+            ["start", "--root", tmp],
+            json.dumps(structured_start_contract("Repaired contract")),
         )
-        state = json.loads((root / ".goal-matrix" / "state.json").read_text(encoding="utf-8"))
+        audit = run_guard(["audit", "--root", tmp])
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        active_text = (root / ".goal-matrix" / "goals" / "active-goal.md").read_text(encoding="utf-8")
 
-        assert started.returncode == 0, started.stderr
-        assert state["goalMatrix"]["childGoals"][0]["contractComplete"] is False
-        assert audit.returncode == 1
-        assert "active goal contract is incomplete" in audit.stderr
-        assert checkpoint.returncode == 1
-        assert not (root / "draft-ran").exists()
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout)["repaired"] is True
+    assert len(state["goalMatrix"]["childGoals"]) == 1
+    goal = state["goalMatrix"]["childGoals"][0]
+    assert goal["id"] == "G1"
+    assert goal["status"] == "Pending"
+    assert goal["contractComplete"] is True
+    assert goal["userOutcome"] == "Repaired contract"
+    assert state["activeGoal"] == "G1 - Repaired contract"
+    assert "Active goal: G1 - Repaired contract" in active_text
+    assert audit.returncode == 0, audit.stderr
+
+
+def test_plain_start_cannot_repair_incomplete_active():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        before = state_path.read_bytes()
+
+        started = run_guard(["start", "--root", tmp], "repair this draft")
+
+        assert state_path.read_bytes() == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+
+
+def test_structured_start_does_not_hide_drift_while_repairing_incomplete_active():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Legacy incomplete").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["goalMatrix"]["childGoals"][0]["contractComplete"] = False
+        write_file(state_path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        write_file(active_path, active_path.read_text(encoding="utf-8").replace("Legacy incomplete", "Drifted title"))
+        before = state_path.read_bytes()
+
+        started = run_guard(
+            ["start", "--root", tmp],
+            json.dumps(structured_start_contract("Must not repair")),
+        )
+
+        assert state_path.read_bytes() == before
+    assert started.returncode == 1
+    assert "active goal projection drift" in started.stderr
 
 
 def test_structured_start_rejects_metadata_only_verification_before_state_write():
@@ -4074,30 +4714,43 @@ def test_structured_start_rejects_non_string_verification_without_traceback():
         assert not (root / ".goal-matrix" / "state.json").exists()
 
 
-def test_start_command_keeps_existing_active_goal():
+def test_structured_start_does_not_overwrite_complete_active():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "first goal").returncode == 0
+        assert run_structured_start(tmp, "first goal").returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        before = state_path.read_bytes()
 
-        second = run_guard(["start", "--root", tmp], "second goal")
-        status_result = run_guard(["status", "--root", tmp])
+        second = run_structured_start(tmp, "second goal")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
 
-    assert second.returncode == 0, second.stderr
-    assert json.loads(second.stdout)["activeGoal"] == "G1 - first goal"
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - first goal"
-    assert status["goalMatrix"]["total"] == 1
-    assert status["goalMatrix"]["pending"] == 1
+        assert state_path.read_bytes() == before
+    assert second.returncode == 1
+    assert "G1 - first goal" in second.stderr
+    assert "checkpoint" in second.stderr
+    assert len(state["goalMatrix"]["childGoals"]) == 1
+    assert all(goal["id"] != "G2" for goal in state["goalMatrix"]["childGoals"])
 
 
-def test_start_command_extracts_prompt_from_hook_json():
+def test_hook_prompt_start_rejects_without_state_write():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], json.dumps({"prompt": "goal matrix 工程化"}))
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
 
-    assert started.returncode == 0, started.stderr
-    assert json.loads(started.stdout)["activeGoal"] == "G1 - goal matrix 工程化"
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 2
+    assert "structured JSON contract required" in started.stderr
+    assert status["activeGoal"] is None
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
 
 
 def test_start_broad_prompt_creates_pending_matrix_before_dispatch():
@@ -4136,25 +4789,80 @@ P2 Markdown canonical state
 
 def test_start_self_evolution_prompt_does_not_invent_backlog():
     with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
 
         started = run_guard(["start", "--root", tmp], "开始进化")
-        active_verify_result = run_guard(["active-verify", "--root", tmp])
-        status_result = run_guard(["status", "--root", tmp])
+        status = json.loads(run_guard(["status", "--root", tmp]).stdout)
+        state_exists = (root / ".goal-matrix" / "state.json").exists()
+        projections = (active_path.read_bytes(), matrix_path.read_bytes())
 
     assert started.returncode == 0, started.stderr
-    assert active_verify_result.returncode == 1
-    assert "metadata-only" in active_verify_result.stderr
     payload = json.loads(started.stdout)
-    assert payload["activeGoal"] == "G1 - 开始进化"
-    assert "plannedChildGoals" not in payload
-
-    status = json.loads(status_result.stdout)
-    assert status["activeGoal"] == "G1 - 开始进化"
+    assert payload == {"activeGoal": None, "complete": True}
+    assert not state_exists
+    assert projections == before
+    assert status["activeGoal"] is None
     assert status["nextLoop"] is None
-    assert status["goalMatrix"]["total"] == 1
-    assert status["goalMatrix"]["pending"] == 1
-    assert status["goalMatrix"]["childGoals"][0]["contractComplete"] is False
+    assert status["goalMatrix"]["pending"] == 0
+    assert status["goalMatrix"]["total"] == 0
+
+
+def test_start_self_evolution_prompt_does_not_plan_embedded_priority_items():
+    prompt = """开始自我进化
+P0 inspect current gaps
+P1 implement the next gap
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        active_path = root / ".goal-matrix" / "goals" / "active-goal.md"
+        matrix_path = root / ".goal-matrix" / "goals" / "goal-matrix.md"
+        before = (active_path.read_bytes(), matrix_path.read_bytes())
+
+        started = run_guard(["start", "--root", tmp], prompt)
+
+        assert not (root / ".goal-matrix" / "state.json").exists()
+        assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
+    assert started.returncode == 0, started.stderr
+    assert json.loads(started.stdout) == {"activeGoal": None, "complete": True}
+
+
+def test_start_self_evolution_promotes_recorded_pending_goal():
+    prompt = """全部完成:
+P1 first pending slice
+P2 second pending slice
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], prompt).returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        sys.path.insert(0, str(ROOT))
+        try:
+            from core.goal_state import write_state_json
+        finally:
+            sys.path.pop(0)
+
+        write_state_json(root, goals=state["goalMatrix"]["childGoals"], active_goal=None)
+        before = json.loads(run_guard(["status", "--root", tmp]).stdout)
+
+        started = run_guard(["start", "--root", tmp], "开始进化")
+        after = json.loads(run_guard(["status", "--root", tmp]).stdout)
+
+    assert before["goalMatrix"]["pending"] == 3
+    assert before["nextAction"]["type"] == "promote_pending_goal"
+    assert started.returncode == 0, started.stderr
+    payload = json.loads(started.stdout)
+    assert payload["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert payload["resumed"] is True
+    assert after["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert after["goalMatrix"]["pending"] == 3
+    assert after["goalMatrix"]["total"] == 3
 
 
 def test_start_command_escapes_pipe_in_prompt_title():
@@ -4162,7 +4870,7 @@ def test_start_command_escapes_pipe_in_prompt_title():
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
-        started = run_guard(["start", "--root", tmp], "fix parser | keep table safe")
+        started = run_structured_start(tmp, "fix parser | keep table safe")
         status_result = run_guard(["status", "--root", tmp])
         matrix_text = (root / ".goal-matrix" / "goals" / "goal-matrix.md").read_text(encoding="utf-8")
 
@@ -4178,7 +4886,7 @@ def test_state_json_is_canonical_after_start():
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
 
-        started = run_guard(["start", "--root", tmp], "canonical machine state")
+        started = run_structured_start(tmp, "canonical machine state")
         state_path = root / ".goal-matrix" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         write_file(root / ".goal-matrix" / "goals" / "active-goal.md", "Active goal: corrupted\n")
@@ -4554,7 +5262,7 @@ def test_audit_rejects_missing_pending_projection_row():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        assert run_guard(["start", "--root", tmp], "Required pending row").returncode == 0
+        assert run_structured_start(tmp, "Required pending row").returncode == 0
         write_file(
             root / ".goal-matrix" / "goals" / "goal-matrix.md",
             """# Goal Matrix
@@ -4738,16 +5446,12 @@ def test_checkpoint_if_active_ignores_missing_active_goal():
 def test_doctor_command_reports_resume_and_plugin_source():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        active_goal = next(
-            line.split(":", 1)[1].strip()
-            for line in (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text().splitlines()
-            if line.startswith("Active goal:")
-        )
+        assert run_structured_start(tmp, "Doctor resume").returncode == 0
         result = run_guard(["doctor", "--root", tmp])
 
     assert result.returncode == 0, result.stderr
     doctor = json.loads(result.stdout)
-    assert doctor["resume"]["activeGoal"] == active_goal
+    assert doctor["resume"]["activeGoal"] == "G1 - Doctor resume"
     assert "nextLoop" in doctor["resume"]
     assert doctor["source"]["pluginRoot"] == str(ROOT)
     assert doctor["source"]["manifestPath"].endswith(".codex-plugin/plugin.json")

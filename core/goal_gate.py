@@ -6,7 +6,6 @@ from pathlib import Path
 
 try:
     from goal_policy import load_project_policy
-    from goal_publish import git_output
     from goal_state import (
         INITIALIZATION_TYPES,
         audit_active_goal_contract,
@@ -20,7 +19,6 @@ try:
     )
 except ImportError:
     from core.goal_policy import load_project_policy
-    from core.goal_publish import git_output
     from core.goal_state import (
         INITIALIZATION_TYPES,
         audit_active_goal_contract,
@@ -196,14 +194,6 @@ def completion_gate(root):
         problems.append(f"active goal still open: {active_goal}; run checkpoint explicitly")
     elif pending_goals:
         problems.append(f"pending goal remains: {pending_goals[0].get('id', 'unknown')}")
-
-    dirty = git_output(root, "status", "--porcelain")
-    if dirty.returncode == 0 and dirty.stdout.strip() and not active_goal:
-        note = gate_input(root, None).lower()
-        focused = re.search(r"^focused verification:\s*\S", note, re.MULTILINE)
-        verified = re.search(r"^verified with:\s*\S", note, re.MULTILINE)
-        if not (focused and verified):
-            problems.append("Fast Lane requires focused verification evidence")
 
     for problem in dict.fromkeys(problems):
         print(f"completion gate blocked: {problem}", file=sys.stderr)

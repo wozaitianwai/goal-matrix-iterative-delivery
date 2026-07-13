@@ -13,7 +13,7 @@ Keep Codex work honest: one active slice, one truth source, one proof before han
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.13-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.14-codex.3
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 
@@ -58,7 +58,12 @@ python3 core/goal_guard.py status --root .
 python3 core/goal_guard.py checkpoint --root . -- python3 scripts/loop_verify.py
 ```
 
-Plain text input creates a blocked draft. Use the structured contract above before implementation.
+Start state invariants:
+
+- Plain single-goal input does not write state; submit the structured JSON contract above instead.
+- Complete structured input repairs an incomplete active goal in place and preserves its id.
+- A complete active goal requires checkpoint and is not overwritten by another start.
+- Self-evolution with no pending goal returns complete and does not synthesize backlog state.
 
 The loop stays small:
 

@@ -173,7 +173,7 @@ MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 
 LOOP_CONTEXT = """Loop engineering:
-- Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
+- Cycle: project initialization status -> Repo active goal -> failing check -> minimal change -> verification -> checkpoint commit -> Repo next loop.
 - self-evolution run: continue only through pending goals already recorded in state; never synthesize work when no pending goal remains.
 - checkpoint commit: make small local commits only after a verified child goal.
 - push policy: preserve verified checkpoint commits; publish only from a clean, integrated branch with closed goals and checkpoint evidence.
@@ -183,28 +183,22 @@ LOOP_CONTEXT = """Loop engineering:
 PHASE_BOUNDARIES = {
     "clarify": "ask blocking questions before implementation; do not create code or commits yet.",
     "goal_matrix": "split the draft into a goal matrix with truth source and verification for each row.",
-    "execute": "one active goal only; inspect -> failing check -> minimal change -> verify.",
+    "execute": "one Repo active goal only; inspect -> failing check -> minimal change -> verify.",
     "verify": "run the named truth-source check before claiming progress.",
-    "checkpoint": "commit only verified child-goal work and keep the next goal explicit.",
+    "checkpoint": "commit only verified child-goal work and keep the Repo next loop explicit.",
     "history": "keep verified checkpoint history readable and publish only from a clean, integrated branch.",
-}
-
-EVENT_CONTEXTS = {
-    "PreToolUse": "Before tool use: perform one loop step only; confirm active goal, policy impact, and write boundary before changes. Fast Lane: for a trivial typo, copy, or single-function edit with no active goal, keep only path/command policy plus a focused verification plan.",
-    "PostToolUse": "After tool use: record one loop step result; if it was verification, connect output to the active goal truth source. Fast Lane: for a trivial no active goal edit, connect the output to the focused verification instead of creating a checkpoint.",
-    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Fast Lane: a trivial no active goal edit may finish with focused verification and no goal checkpoint; protected paths, publish actions, unclear scope, or multi-file behavior changes leave Fast Lane. Next loop: select next pending goal and continue with it before final completion, keep the active goal open with a concrete next action when prerequisites are recoverable, or state no remaining goal.",
 }
 
 BASE_CONTEXT = """GOAL MATRIX DELIVERY ACTIVE
 
 Execution discipline:
-- Read local instructions before editing; expose one active goal; use systematic-debugging for failures and verification-before-completion before claims.
+- Read local instructions before editing; expose one Repo active goal; use systematic-debugging for failures and verification-before-completion before claims.
 
 Scope control:
-- Reuse existing code, prefer deletion/stdlib, and ship one bounded child goal. Fast Lane applies only to a trivial no-active-goal edit with focused verification.
+- Reuse existing code, prefer deletion/stdlib, and ship one bounded child goal. Fast Lane applies only to a trivial edit with no Repo active goal and focused verification.
 
 Fusion workflow:
-Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Checkpoint
+Intake -> Matrix -> Repo active goal -> Development flow -> Execute -> Verify -> Checkpoint
 - Intake names scope, risk, and truth source; Development flow is inspect -> failing check -> minimal fix -> verify -> checkpoint.
 
 """ + LOOP_CONTEXT + """
@@ -212,7 +206,7 @@ Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Chec
 Initialization governance:
 - Supported initialization types: new-project, iteration, bugfix, legacy-baseline.
 - Project policy source: .goal-matrix/project-policy.json.
-- Immutable paths are blocked; Policy impact is none, approval-required, or blocked; every active goal names paths, boundary, truth source, verification, and Development flow.
+- Immutable paths are blocked; Policy impact is none, approval-required, or blocked; every Repo active goal names paths, boundary, truth source, verification, and Development flow.
 
 User operating habits:
 - A read-only request permits no writes; start from the named truth source; when scope narrowed, answer that scope first; UI-only evidence is insufficient.
@@ -228,18 +222,18 @@ Codex visible goal runtime:
 - If a goal-like prompt needs a visible Codex goal and create_goal is available, call create_goal once before work.
 
 First response contract:
-- First substantive response must show a goal matrix or active-goal block before freeform discussion, including for clarify/design or read-only work.
+- First substantive response must show a goal matrix or Repo active-goal block before freeform discussion, including for clarify/design or read-only work.
 
 Goal self-correction:
-- Repair a missing goal matrix before edits; Active goal must include Delivery boundary, Skipped, truth source, Verification, and Development flow; split broad work and keep recoverable blockers open.
+- Repair a missing goal matrix before edits; Repo active goal must include Delivery boundary, Skipped, truth source, Verification, and Development flow; split broad work and keep recoverable blockers open.
 
 Lifecycle CLI:
 - goal_guard.py classify; goal_guard.py init; goal_guard.py start; goal_guard.py checkpoint; goal_guard.py status; goal_guard.py gate; goal_guard.py policy-gate; goal_guard.py publish-gate; goal_guard.py audit.
 """
 
 PROMPT_CONTEXT = BASE_CONTEXT + """
-Minimum active-goal block:
-Active goal: G<n> - <name>
+Minimum Repo active-goal block:
+Repo active goal: G<n> - <name>
 Initialization type: <new-project|iteration|bugfix|legacy-baseline>
 Policy impact: <none|approval-required|blocked>
 Touched paths: <paths or patterns>
@@ -414,12 +408,29 @@ def status_payload(root):
     problems = audit_project(root)
     active_goal = read_active_goal(root)
     goals = read_goal_matrix(root)
+    if (
+        not state_goal_matrix_available(root)
+        and active_goal == "G<n> - <name>"
+        and goals
+        == [
+            {
+                "id": "G0",
+                "userOutcome": "Initialize project governance",
+                "engineeringSlice": "Create `.goal-matrix` baseline",
+                "truthSource": "Policy/docs",
+                "verification": "Audit passes",
+                "status": "Pending",
+            }
+        ]
+    ):
+        active_goal = None
+        goals = []
     return {
         "root": str(root),
         "initialized": not problems,
         "auditProblems": problems,
         "activeGoal": active_goal,
-        "nextLoop": read_next_loop(root, active_goal),
+        "nextLoop": read_next_loop(root, active_goal) if goals else None,
         "nextAction": next_action_payload(root, goals, active_goal),
         "subagentCandidates": subagent_candidates(goals, active_goal),
         "goalMatrix": status_goal_matrix_summary(root, goals, active_goal),
@@ -431,15 +442,6 @@ def status_project(root):
     payload = status_payload(root)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload["initialized"] else 1
-
-
-def first_prompt_line(text):
-    text = prompt_text(text.lstrip("\ufeff").strip())
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            return line[:80]
-    return "Start next goal"
 
 
 def structured_start_contract(text):
@@ -554,20 +556,44 @@ def start_project(root, prompt):
         if not (goal.get("id") == "G0" and goal.get("userOutcome") == "Initialize project governance")
     ]
     active_goal = read_active_goal(root)
+    contract, contract_problems = structured_start_contract(prompt)
+    if contract_problems:
+        for problem in contract_problems:
+            print(f"invalid start contract: {problem}", file=sys.stderr)
+        return 2
+
     if has_pending_active_goal(goals, active_goal):
-        print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
-        return 0
+        active_id = active_goal_id(active_goal)
+        active_index = next(index for index, goal in enumerate(goals) if goal.get("id") == active_id)
+        if goals[active_index].get("contractComplete") is not True:
+            if not contract:
+                print("structured JSON contract required to repair incomplete active goal", file=sys.stderr)
+                return 2
+            problems = audit_project(root)
+            incomplete_problem = "active goal contract is incomplete: use structured start input"
+            if not problems or any(problem != incomplete_problem for problem in problems):
+                for problem in problems:
+                    print(problem, file=sys.stderr)
+                return 1
+            goals[active_index] = {"id": active_id, **contract}
+            active_goal = active_goal_title(goals[active_index])
+            write_state_json(root, goals=goals, active_goal=active_goal)
+            print(
+                json.dumps(
+                    {"activeGoal": active_goal, "root": str(root), "structured": True, "repaired": True},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        print(f"active goal still open: {active_goal}; run checkpoint before starting another goal", file=sys.stderr)
+        return 1
 
     problems = audit_project(root)
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)
         return 1
-    contract, contract_problems = structured_start_contract(prompt)
-    if contract_problems:
-        for problem in contract_problems:
-            print(f"invalid start contract: {problem}", file=sys.stderr)
-        return 2
 
     goals_dir = root / ".goal-matrix" / "goals"
     goals_dir.mkdir(parents=True, exist_ok=True)
@@ -579,6 +605,22 @@ def start_project(root, prompt):
         goals.append(goal)
         write_state_json(root, goals=goals, active_goal=active_goal)
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "structured": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if re.search(r"开始进化|自我进化|自进化|self[- ]evolution", prompt_text(prompt), re.IGNORECASE):
+        pending_goal = first_pending_goal(goals)
+        if pending_goal:
+            active_goal = active_goal_title(pending_goal)
+            write_state_json(root, goals=goals, active_goal=active_goal)
+            print(
+                json.dumps(
+                    {"activeGoal": active_goal, "root": str(root), "resumed": True},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        print(json.dumps({"activeGoal": None, "complete": True}, ensure_ascii=False, indent=2))
         return 0
 
     items = broad_prompt_items(prompt)
@@ -628,28 +670,8 @@ def start_project(root, prompt):
         print(json.dumps({"activeGoal": active_goal, "root": str(root), "plannedChildGoals": planned}, ensure_ascii=False, indent=2))
         return 0
 
-    title = first_prompt_line(prompt)
-    active_goal = f"{goal_id} - {title}"
-
-    goal = {
-        "id": goal_id,
-        "userOutcome": title,
-        "engineeringSlice": "Start one bounded child goal",
-        "truthSource": "`.goal-matrix` status",
-        "verification": "`python3 core/goal_guard.py status --root .`",
-        "initializationType": "iteration",
-        "policyImpact": "none",
-        "touchedPaths": "TBD",
-        "deliveryBoundary": "one bounded child goal from the current prompt",
-        "skipped": "unrelated work",
-        "developmentFlow": "inspect -> failing check -> implement -> verify -> checkpoint",
-        "contractComplete": False,
-        "status": "Pending",
-    }
-    goals.append(goal)
-    write_state_json(root, goals=goals, active_goal=active_goal)
-    print(json.dumps({"activeGoal": active_goal, "root": str(root)}, ensure_ascii=False, indent=2))
-    return 0
+    print("structured JSON contract required for a single goal", file=sys.stderr)
+    return 2
 
 
 def checkpoint_project(root, verify_command, if_active=False):
@@ -900,8 +922,8 @@ def project_status_context(root):
 Project initialization status:
 - cwd: {root}
 - {status}
-- Active goal: {active_goal or "none"}
-- Next loop: {next_loop or "none"}
+- Repo active goal: {active_goal or "none"}
+- Repo next loop: {next_loop or "none"}
 - Goal matrix: {matrix_status}
 """
 
@@ -917,8 +939,8 @@ def hook(event):
             emit(event, PROMPT_CONTEXT + phase_context(prompt) + project_status_context(Path.cwd()))
         return 0
 
-    if event in EVENT_CONTEXTS:
-        emit(event, EVENT_CONTEXTS[event] + project_status_context(Path.cwd()))
+    if event == "Stop":
+        print("{}")
         return 0
 
     return 0

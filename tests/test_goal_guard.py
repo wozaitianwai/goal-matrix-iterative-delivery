@@ -2693,11 +2693,70 @@ def test_codex_hook_config_wires_loop_events():
         assert event in hooks
 
 
+def test_pre_tool_hook_translates_policy_denial_to_exit_2():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm package.json"}})
+    env = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
+    env["PLUGIN_ROOT"] = str(ROOT)
+
+    result = subprocess.run(
+        ["/bin/sh", "-c", pre_tool_command],
+        input=payload,
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+        env=env,
+    )
+
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert "policy gate blocked: package.json requires approval" in result.stderr
+    assert "policy gate blocked: protected command: rm" in result.stderr
+
+
+def test_pre_tool_hook_translates_publish_denial_to_exit_2():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        plugin_root = root / "plugin"
+        project_root = root / "project"
+        marker = plugin_root / "pre-tool-called"
+        write_file(plugin_root / ".codex-plugin" / "plugin.json", "{}\n")
+        write_file(
+            plugin_root / "core" / "goal_guard.py",
+            "import pathlib, sys\n"
+            "if 'policy-gate' in sys.argv:\n"
+            "    raise SystemExit(0)\n"
+            "if 'publish-gate' in sys.argv:\n"
+            "    print('publish gate denied marker', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
+            f"pathlib.Path({str(marker)!r}).write_text('called')\n",
+        )
+        project_root.mkdir()
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status --short"}})
+
+        result = subprocess.run(
+            ["/bin/sh", "-c", pre_tool_command],
+            input=payload,
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env={**os.environ, "PLUGIN_ROOT": str(plugin_root)},
+        )
+
+        assert result.returncode == 2, (result.returncode, result.stderr)
+        assert "publish gate denied marker" in result.stderr
+        assert not marker.exists()
+
+
 def test_codex_hook_config_invokes_lifecycle_commands():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     user_prompt_command = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
     user_prompt_command_windows = hooks["UserPromptSubmit"][0]["hooks"][0]["commandWindows"]
     pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    pre_tool_command_windows = hooks["PreToolUse"][0]["hooks"][0]["commandWindows"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
     stop_command_windows = hooks["Stop"][0]["hooks"][0]["commandWindows"]
 
@@ -2719,12 +2778,18 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
     assert " hook PreToolUse" in pre_tool_command
+    assert pre_tool_command.count('if [ "$rc" -ne 0 ]; then exit 2; fi') == 2
+    assert 'exit "$rc"' not in pre_tool_command
+    assert pre_tool_command_windows.count("Remove-Item $tmp; exit 2") == 2
+    assert "exit $rc" not in pre_tool_command_windows
     assert " completion-gate --root ." in stop_command
     assert " --verify" not in stop_command
     assert " active-verify" not in stop_command
     assert "scripts/loop_verify.py" not in stop_command
-    assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit "$rc"; fi' in stop_command
-    assert "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in stop_command_windows
+    assert 'rc=$?; if [ "$rc" -ne 0 ]; then exit 2; fi' in stop_command
+    assert 'exit "$rc"' not in stop_command
+    assert "if ($LASTEXITCODE -ne 0) { exit 2 }" in stop_command_windows
+    assert "exit $LASTEXITCODE" not in stop_command_windows
     assert " hook Stop" in stop_command
 
 
@@ -2879,7 +2944,8 @@ def test_stop_hook_preserves_completion_gate_failure():
             plugin_root / "core" / "goal_guard.py",
             "import pathlib, sys\n"
             "if 'completion-gate' in sys.argv:\n"
-            "    raise SystemExit(7)\n"
+            "    print('completion gate denied marker', file=sys.stderr)\n"
+            "    raise SystemExit(1)\n"
             "if sys.argv[-2:] == ['hook', 'Stop']:\n"
             f"    pathlib.Path({str(marker)!r}).write_text('called')\n",
         )
@@ -2895,7 +2961,8 @@ def test_stop_hook_preserves_completion_gate_failure():
             env=env,
         )
 
-        assert result.returncode == 7
+        assert result.returncode == 2, (result.returncode, result.stderr)
+        assert "completion gate denied marker" in result.stderr
         assert not marker.exists()
 
 
@@ -2995,7 +3062,7 @@ def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
             env=env,
         )
 
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Fast Lane requires focused verification" in result.stderr
 
 

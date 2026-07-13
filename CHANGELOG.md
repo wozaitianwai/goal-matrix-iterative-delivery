@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.14-codex.1 - 2026-07-13
+
+- Run installed Codex hooks from the official plugin root in any project, and translate policy, publish, and completion denials to the supported blocking exit code.
+- Allow protected-path reads while blocking literal writes, remove per-tool model-context injection, and distinguish the visible Codex objective from repo-local goals.
+- Reject incomplete plain goal drafts, repair a legacy incomplete active goal only from a valid structured contract, and allow read-only tasks to stop without unrelated dirty-worktree evidence.
+- Publish these lifecycle repairs under plugin version `0.1.14+codex.20260713122134` and pin Codex marketplace installation to `v0.1.14-codex.1`.
+
 ## v0.1.13-codex.1 - 2026-07-10
 
 - Fix post-merge governance approval detection for standard merge commits so the main branch CI gate remains fail-closed without rejecting approved merge evidence.

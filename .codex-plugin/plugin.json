@@ -1,6 +1,6 @@
 {
   "name": "goal-matrix-iterative-delivery",
-  "version": "0.1.13+codex.20260710114525",
+  "version": "0.1.14+codex.20260713122134",
   "description": "hook-backed goal-matrix workflow guard for Codex.",
   "author": {
     "name": "wozaitianwai",

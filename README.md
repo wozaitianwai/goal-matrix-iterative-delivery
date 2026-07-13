@@ -13,7 +13,7 @@ Keep Codex work honest: one active slice, one truth source, one proof before han
 Install the GitHub repository as a Codex plugin source:
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.13-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.14-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 

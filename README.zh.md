@@ -13,7 +13,7 @@
 把 GitHub 仓库作为 Codex 插件源安装：
 
 ```bash
-codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.13-codex.1
+codex plugin marketplace add https://github.com/wozaitianwai/goal-matrix-iterative-delivery.git --ref v0.1.14-codex.1
 codex plugin add goal-matrix-iterative-delivery@goal-matrix-github
 ```
 

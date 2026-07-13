@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.14-codex.3 - 2026-07-13
+
+- Make the PreToolUse policy-denial regression initialize its own temporary project policy instead of depending on ignored local `.goal-matrix` state.
+- Keep `v0.1.14-codex.2` immutable after the clean GitHub runner exposed this fixture gap; no GitHub Release was created from that tag.
+- Publish the CI-hermetic package under version `0.1.14+codex.20260713133121` and pin Codex marketplace installation to `v0.1.14-codex.3`.
+
 ## v0.1.14-codex.2 - 2026-07-13
 
 - Resume the first recorded pending goal for self-evolution instead of incorrectly returning complete when only the active projection is empty.

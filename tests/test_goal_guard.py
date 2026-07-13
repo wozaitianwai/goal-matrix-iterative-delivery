@@ -21,7 +21,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.14-codex.2"
+RELEASE_INSTALL_TAG = "v0.1.14-codex.3"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -2765,14 +2765,21 @@ def test_pre_tool_hook_translates_policy_denial_to_exit_2():
     env = {key: value for key, value in os.environ.items() if key != "GOAL_MATRIX_APPROVED"}
     env["PLUGIN_ROOT"] = str(ROOT)
 
-    result = subprocess.run(
-        ["/bin/sh", "-c", pre_tool_command],
-        input=payload,
-        text=True,
-        capture_output=True,
-        cwd=ROOT,
-        env=env,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        project_root = Path(tmp)
+        make_policy_project(
+            project_root,
+            approvalRequiredPaths=["package.json"],
+            protectedCommands=["rm"],
+        )
+        result = subprocess.run(
+            ["/bin/sh", "-c", pre_tool_command],
+            input=payload,
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env=env,
+        )
 
     assert result.returncode == 2, (result.returncode, result.stderr)
     assert "policy gate blocked: package.json requires approval" in result.stderr

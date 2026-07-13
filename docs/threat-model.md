@@ -4,7 +4,7 @@ Goal Matrix Iterative Delivery is a Codex lifecycle adapter and workflow guardra
 
 ## What It Enforces
 
-- `PreToolUse` runs `policy-gate` before normal tool execution. It checks structured path fields, patch file headers, and literal shell write targets against `.goal-matrix/project-policy.json`; explicit reader operands remain readable, while output redirections and mutating or unknown command operands are treated as writes. Configured `protectedCommands` match only at a simple shell segment's command position.
+- `PreToolUse` runs `policy-gate` before normal tool execution. It checks structured path fields, patch file headers, and literal shell write targets against `.goal-matrix/project-policy.json`; explicit reader operands remain readable, while output redirections and mutating or unknown command operands are treated as writes. Configured `protectedCommands` match only at a simple shell segment's command position, including a leading file-descriptor redirection, an executable path basename, and supported Git global options.
 - `policy-gate --debug` prints the paths and commands recognized from a hook payload so fixture updates can be checked against the real parser surface.
 - `PreToolUse` runs `publish-gate` before `git push` and before commands matching `.goal-matrix/project-policy.json` `publishActionPatterns`. It checks upstream state, local ahead/behind count, clean worktree state, open active goal state, and current checkpoint evidence.
 - `Stop` preserves the review gate exit code. A failed review gate blocks the lifecycle hook instead of being swallowed by `exit 0`.
@@ -17,15 +17,16 @@ Goal Matrix Iterative Delivery is a Codex lifecycle adapter and workflow guardra
 - It does not prevent a user or process from disabling hooks, editing files outside Codex, changing git history, or bypassing the optional native hook.
 - It does not create the visible Codex sidebar goal by itself; the agent still has to call `create_goal`.
 - It does not sandbox shell commands, filesystem writes, network access, secrets, package scripts, or third-party tools.
-- Its bounded `shlex` parser does not interpret variables, command substitution, aliases, `eval`, `bash -c`, interpreter semantics, dynamic paths, or wrapper option grammar beyond bare `sudo`, `env`, and `command` prefixes plus leading `NAME=value` assignments. Those require host sandboxing, filesystem permissions, or post-change review.
+- Its bounded `shlex` parser does not interpret variables, command substitution, aliases, `eval`, `bash -c`, interpreter semantics, dynamic paths, or wrapper option grammar beyond bare `sudo`, `env`, and `command` prefixes, leading `NAME=value` assignments, and Git global options. Those require host sandboxing, filesystem permissions, or post-change review.
 - It does not prove product correctness. Verification commands must still be chosen to test the actual code, docs, API, database, log, browser, or release behavior.
 - It does not replace repository permissions, branch protection, CI protection, secret scanning, code review, or deployment approval.
 - Actor-scoped commit trailers are CI attestations, not cryptographic authorization. Repository permissions and protected environments remain the trust boundary.
 
-## Fail-Open Boundaries
+## Failure Boundaries
 
-- Hooks fail open when `CODEX_PLUGIN_ROOT` is missing or does not point at this plugin. This avoids blocking unrelated projects from a stale or foreign cwd.
-- `policy-gate` fails open when `.goal-matrix/project-policy.json` is missing, invalid, or not initialized. Run `goal_guard.py doctor --fix --root .` or `goal_guard.py init --root .` before relying on project policy.
+- Hook bootstrap fails closed when the official `PLUGIN_ROOT` (or compatibility `CLAUDE_PLUGIN_ROOT`) is missing or invalid; the hook exits before running a gate.
+- Missing project policy fails open because an uninitialized project has no `.goal-matrix/project-policy.json`. Run `goal_guard.py init --root .` before relying on project policy.
+- Invalid project policy fails closed and reports the validation error. Run `goal_guard.py doctor --fix --root .` to repair it.
 - `publish-gate --hook` ignores payloads that are neither `git push` nor configured `publishActionPatterns`. It is a publish guard, not a general command firewall.
 - Native `pre-push` protection is optional and only applies after `scripts/install_adapter.py codex --target <repo> --install-git-hook`.
 

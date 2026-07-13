@@ -27,6 +27,19 @@ READ_ONLY_COMMANDS = {
     "tail",
     "wc",
 }
+GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--config-env",
+    "--exec-path",
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+}
+GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE = tuple(
+    f"{option}=" for option in GIT_GLOBAL_OPTIONS_WITH_VALUE if option.startswith("--")
+)
 
 
 def load_project_policy(root):
@@ -219,6 +232,12 @@ def shell_segment_parts(segment):
     index = 0
     while index < len(segment):
         token = segment[index]
+        if not argv and token.isdigit() and index + 1 < len(segment) and segment[index + 1] in SHELL_REDIRECTIONS:
+            operator = segment[index + 1]
+            target = segment[index + 2] if index + 2 < len(segment) else ""
+            redirections.append((operator, target))
+            index += 3
+            continue
         if token in SHELL_REDIRECTIONS:
             target = segment[index + 1] if index + 1 < len(segment) else ""
             redirections.append((token, target))
@@ -232,7 +251,7 @@ def shell_segment_parts(segment):
 def shell_segment_is_read_only(argv):
     if not argv:
         return False
-    command = argv[0].lower()
+    command = Path(argv[0]).name.lower()
     if command in READ_ONLY_COMMANDS:
         return True
     if command != "sed":
@@ -252,15 +271,38 @@ def rm_has_operand(argv):
     return False
 
 
-def policy_command_argv(argv):
+def policy_command_argv(segment):
     cursor = 0
-    while cursor < len(argv):
-        token = argv[cursor]
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token) or token in {"sudo", "env", "command"}:
+    while cursor < len(segment):
+        token = segment[cursor]
+        if token.isdigit() and cursor + 1 < len(segment) and segment[cursor + 1] in SHELL_REDIRECTIONS:
+            cursor += 3
+            continue
+        if token in SHELL_REDIRECTIONS:
+            cursor += 2
+            continue
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token) or Path(token).name in {"sudo", "env", "command"}:
             cursor += 1
             continue
         break
-    return argv[cursor:]
+    command, _ = shell_segment_parts(segment[cursor:])
+    if not command:
+        return command
+    command[0] = Path(command[0]).name
+    if command[0].lower() != "git":
+        return command
+
+    cursor = 1
+    while cursor < len(command):
+        token = command[cursor]
+        if token in GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            cursor += 2
+            continue
+        if token.startswith(GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE) or token.startswith("-"):
+            cursor += 1
+            continue
+        break
+    return [command[0], *command[cursor:]]
 
 
 def command_literal_policy_paths(command, root, patterns):
@@ -306,8 +348,7 @@ def policy_protected_command_matches(command, protected):
     if not protected_tokens:
         return False
     for segment in shell_command_segments(command):
-        argv, _ = shell_segment_parts(segment)
-        argv = policy_command_argv(argv)
+        argv = policy_command_argv(segment)
         if [token.lower() for token in argv[: len(protected_tokens)]] != protected_tokens:
             continue
         if protected_tokens == ["rm"] and not rm_has_operand(argv):

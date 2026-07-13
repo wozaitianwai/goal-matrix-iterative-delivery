@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.14-codex.2 - 2026-07-13
+
+- Resume the first recorded pending goal for self-evolution instead of incorrectly returning complete when only the active projection is empty.
+- Close protected-command bypasses through leading file-descriptor redirections, executable paths, and supported Git global options, and align runtime failure-boundary docs with the shipped hooks.
+- Keep `v0.1.14-codex.1` immutable after pre-merge review found these gaps; no GitHub Release was created from that tag.
+- Publish the corrected plugin under version `0.1.14+codex.20260713124330` and pin Codex marketplace installation to `v0.1.14-codex.2`.
+
 ## v0.1.14-codex.1 - 2026-07-13
 
 - Run installed Codex hooks from the official plugin root in any project, and translate policy, publish, and completion denials to the supported blocking exit code.

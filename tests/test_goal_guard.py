@@ -21,7 +21,7 @@ PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_plugin_package.py"
 LOOP_AUDIT = ROOT / "scripts" / "loop_audit.py"
 GOVERNANCE_CHECK = ROOT / "scripts" / "check_governance.py"
 CODEX_HOOK_FIXTURES = ROOT / "tests" / "fixtures" / "codex-hooks"
-RELEASE_INSTALL_TAG = "v0.1.14-codex.1"
+RELEASE_INSTALL_TAG = "v0.1.14-codex.2"
 
 PROTOCOL_INVARIANTS = (
     "Goal Matrix Engineering Protocol",
@@ -458,21 +458,27 @@ def test_native_pre_push_boundary_is_documented():
 
 def test_threat_model_documents_enforcement_and_boundaries():
     text = read_text("docs/threat-model.md")
+    operations = read_text("docs/operations.md")
     for phrase in (
         "What It Enforces",
         "What It Does Not Enforce",
-        "Fail-Open Boundaries",
+        "Failure Boundaries",
         "Webhook Egress",
         "PreToolUse",
         "Stop",
         "policy-gate",
         "publish-gate",
         "not a security sandbox",
-        "CODEX_PLUGIN_ROOT",
+        "PLUGIN_ROOT",
         "https://",
         "allowedHosts",
     ):
         assert phrase in text
+    assert "CODEX_PLUGIN_ROOT" not in text + operations
+    assert "Hook bootstrap fails closed" in text
+    assert "Invalid project policy fails closed" in text
+    assert "Missing project policy fails open" in text
+    assert "`PLUGIN_ROOT`" in operations
 
 
 def test_install_adapter_rejects_non_hook_instruction_adapters():
@@ -3261,6 +3267,31 @@ def test_codex_hook_commands_fail_loudly_without_plugin_root():
             assert not marker.exists(), f"{event}: foreign goal guard executed"
 
 
+def test_codex_hook_commands_fail_loudly_for_invalid_plugin_root():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    with tempfile.TemporaryDirectory() as tmp:
+        invalid_root = Path(tmp) / "missing-plugin"
+        env = {**os.environ, "PLUGIN_ROOT": str(invalid_root)}
+
+        for event, entries in hooks.items():
+            hook = entries[0]["hooks"][0]
+            result = subprocess.run(
+                ["/bin/sh", "-c", hook["command"]],
+                input='{"prompt":"continue"}' if event == "UserPromptSubmit" else "{}",
+                text=True,
+                capture_output=True,
+                cwd=tmp,
+                env=env,
+            )
+
+            assert result.returncode != 0, event
+            assert "invalid PLUGIN_ROOT" in result.stdout + result.stderr, event
+            assert "invalid PLUGIN_ROOT" in hook["commandWindows"], event
+            assert hook["commandWindows"].index("if (-not (Test-Path") < hook["commandWindows"].index(
+                "if (Get-Command python"
+            ), event
+
+
 def test_public_package_copy_uses_generic_scope_language():
     banned = ("pony" + "tail", "super" + "power", "super" + "powers", "cl" + "aud")
     paths = (
@@ -4087,6 +4118,52 @@ def test_policy_gate_matches_protected_commands_after_supported_prefixes():
         assert "protected command" in result.stderr
 
 
+def test_policy_gate_closes_protected_command_position_bypasses():
+    blocked = (
+        "2>/dev/null rm README.md",
+        "X=1 2>/dev/null /bin/rm README.md",
+        "env 2>/dev/null /bin/rm README.md",
+        "sudo 2>/dev/null /bin/rm README.md",
+        "command 2>/dev/null /bin/rm README.md",
+        "/bin/rm README.md",
+        "git -C . reset --hard HEAD",
+        "X=1 2>/dev/null git -C . reset --hard HEAD",
+    )
+    allowed = (
+        "echo 2>/dev/null rm README.md",
+        "/bin/echo rm README.md",
+        "git -C . status",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        make_policy_project(
+            root,
+            immutablePaths=[],
+            approvalRequiredPaths=[],
+            protectedCommands=["rm", "git reset --hard"],
+        )
+        blocked_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in blocked
+        ]
+        allowed_results = [
+            run_guard(
+                ["policy-gate", "--root", str(root), "--hook"],
+                json.dumps({"tool_input": {"cmd": command}}),
+            )
+            for command in allowed
+        ]
+
+    for command, result in zip(blocked, blocked_results):
+        assert result.returncode == 1, command
+        assert "protected command" in result.stderr
+    for command, result in zip(allowed, allowed_results):
+        assert result.returncode == 0, f"{command}: {result.stderr}"
+
+
 def test_policy_gate_blocks_compound_redirection_targets():
     commands = (
         "printf x &> package.json",
@@ -4745,6 +4822,40 @@ P1 implement the next gap
         assert (active_path.read_bytes(), matrix_path.read_bytes()) == before
     assert started.returncode == 0, started.stderr
     assert json.loads(started.stdout) == {"activeGoal": None, "complete": True}
+
+
+def test_start_self_evolution_promotes_recorded_pending_goal():
+    prompt = """全部完成:
+P1 first pending slice
+P2 second pending slice
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_guard(["start", "--root", tmp], prompt).returncode == 0
+        state_path = root / ".goal-matrix" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        sys.path.insert(0, str(ROOT))
+        try:
+            from core.goal_state import write_state_json
+        finally:
+            sys.path.pop(0)
+
+        write_state_json(root, goals=state["goalMatrix"]["childGoals"], active_goal=None)
+        before = json.loads(run_guard(["status", "--root", tmp]).stdout)
+
+        started = run_guard(["start", "--root", tmp], "开始进化")
+        after = json.loads(run_guard(["status", "--root", tmp]).stdout)
+
+    assert before["goalMatrix"]["pending"] == 3
+    assert before["nextAction"]["type"] == "promote_pending_goal"
+    assert started.returncode == 0, started.stderr
+    payload = json.loads(started.stdout)
+    assert payload["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert payload["resumed"] is True
+    assert after["activeGoal"] == "G1 - Schedule broad prompt delivery"
+    assert after["goalMatrix"]["pending"] == 3
+    assert after["goalMatrix"]["total"] == 3
 
 
 def test_start_command_escapes_pipe_in_prompt_title():

@@ -608,6 +608,18 @@ def start_project(root, prompt):
         return 0
 
     if re.search(r"开始进化|自我进化|自进化|self[- ]evolution", prompt_text(prompt), re.IGNORECASE):
+        pending_goal = first_pending_goal(goals)
+        if pending_goal:
+            active_goal = active_goal_title(pending_goal)
+            write_state_json(root, goals=goals, active_goal=active_goal)
+            print(
+                json.dumps(
+                    {"activeGoal": active_goal, "root": str(root), "resumed": True},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         print(json.dumps({"activeGoal": None, "complete": True}, ensure_ascii=False, indent=2))
         return 0
 

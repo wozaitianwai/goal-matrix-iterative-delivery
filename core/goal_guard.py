@@ -173,7 +173,7 @@ MARKETPLACE_NAME = "goal-matrix-github"
 PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 
 LOOP_CONTEXT = """Loop engineering:
-- Cycle: project initialization status -> active goal -> failing check -> minimal change -> verification -> checkpoint commit -> next loop.
+- Cycle: project initialization status -> Repo active goal -> failing check -> minimal change -> verification -> checkpoint commit -> Repo next loop.
 - self-evolution run: continue only through pending goals already recorded in state; never synthesize work when no pending goal remains.
 - checkpoint commit: make small local commits only after a verified child goal.
 - push policy: preserve verified checkpoint commits; publish only from a clean, integrated branch with closed goals and checkpoint evidence.
@@ -183,28 +183,22 @@ LOOP_CONTEXT = """Loop engineering:
 PHASE_BOUNDARIES = {
     "clarify": "ask blocking questions before implementation; do not create code or commits yet.",
     "goal_matrix": "split the draft into a goal matrix with truth source and verification for each row.",
-    "execute": "one active goal only; inspect -> failing check -> minimal change -> verify.",
+    "execute": "one Repo active goal only; inspect -> failing check -> minimal change -> verify.",
     "verify": "run the named truth-source check before claiming progress.",
-    "checkpoint": "commit only verified child-goal work and keep the next goal explicit.",
+    "checkpoint": "commit only verified child-goal work and keep the Repo next loop explicit.",
     "history": "keep verified checkpoint history readable and publish only from a clean, integrated branch.",
-}
-
-EVENT_CONTEXTS = {
-    "PreToolUse": "Before tool use: perform one loop step only; confirm active goal, policy impact, and write boundary before changes. Fast Lane: for a trivial typo, copy, or single-function edit with no active goal, keep only path/command policy plus a focused verification plan.",
-    "PostToolUse": "After tool use: record one loop step result; if it was verification, connect output to the active goal truth source. Fast Lane: for a trivial no active goal edit, connect the output to the focused verification instead of creating a checkpoint.",
-    "Stop": "Before completion: one loop step must have verification, checkpoint/status evidence, and push history policy if publishing. Fast Lane: a trivial no active goal edit may finish with focused verification and no goal checkpoint; protected paths, publish actions, unclear scope, or multi-file behavior changes leave Fast Lane. Next loop: select next pending goal and continue with it before final completion, keep the active goal open with a concrete next action when prerequisites are recoverable, or state no remaining goal.",
 }
 
 BASE_CONTEXT = """GOAL MATRIX DELIVERY ACTIVE
 
 Execution discipline:
-- Read local instructions before editing; expose one active goal; use systematic-debugging for failures and verification-before-completion before claims.
+- Read local instructions before editing; expose one Repo active goal; use systematic-debugging for failures and verification-before-completion before claims.
 
 Scope control:
-- Reuse existing code, prefer deletion/stdlib, and ship one bounded child goal. Fast Lane applies only to a trivial no-active-goal edit with focused verification.
+- Reuse existing code, prefer deletion/stdlib, and ship one bounded child goal. Fast Lane applies only to a trivial edit with no Repo active goal and focused verification.
 
 Fusion workflow:
-Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Checkpoint
+Intake -> Matrix -> Repo active goal -> Development flow -> Execute -> Verify -> Checkpoint
 - Intake names scope, risk, and truth source; Development flow is inspect -> failing check -> minimal fix -> verify -> checkpoint.
 
 """ + LOOP_CONTEXT + """
@@ -212,7 +206,7 @@ Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Chec
 Initialization governance:
 - Supported initialization types: new-project, iteration, bugfix, legacy-baseline.
 - Project policy source: .goal-matrix/project-policy.json.
-- Immutable paths are blocked; Policy impact is none, approval-required, or blocked; every active goal names paths, boundary, truth source, verification, and Development flow.
+- Immutable paths are blocked; Policy impact is none, approval-required, or blocked; every Repo active goal names paths, boundary, truth source, verification, and Development flow.
 
 User operating habits:
 - A read-only request permits no writes; start from the named truth source; when scope narrowed, answer that scope first; UI-only evidence is insufficient.
@@ -228,18 +222,18 @@ Codex visible goal runtime:
 - If a goal-like prompt needs a visible Codex goal and create_goal is available, call create_goal once before work.
 
 First response contract:
-- First substantive response must show a goal matrix or active-goal block before freeform discussion, including for clarify/design or read-only work.
+- First substantive response must show a goal matrix or Repo active-goal block before freeform discussion, including for clarify/design or read-only work.
 
 Goal self-correction:
-- Repair a missing goal matrix before edits; Active goal must include Delivery boundary, Skipped, truth source, Verification, and Development flow; split broad work and keep recoverable blockers open.
+- Repair a missing goal matrix before edits; Repo active goal must include Delivery boundary, Skipped, truth source, Verification, and Development flow; split broad work and keep recoverable blockers open.
 
 Lifecycle CLI:
 - goal_guard.py classify; goal_guard.py init; goal_guard.py start; goal_guard.py checkpoint; goal_guard.py status; goal_guard.py gate; goal_guard.py policy-gate; goal_guard.py publish-gate; goal_guard.py audit.
 """
 
 PROMPT_CONTEXT = BASE_CONTEXT + """
-Minimum active-goal block:
-Active goal: G<n> - <name>
+Minimum Repo active-goal block:
+Repo active goal: G<n> - <name>
 Initialization type: <new-project|iteration|bugfix|legacy-baseline>
 Policy impact: <none|approval-required|blocked>
 Touched paths: <paths or patterns>
@@ -900,8 +894,8 @@ def project_status_context(root):
 Project initialization status:
 - cwd: {root}
 - {status}
-- Active goal: {active_goal or "none"}
-- Next loop: {next_loop or "none"}
+- Repo active goal: {active_goal or "none"}
+- Repo next loop: {next_loop or "none"}
 - Goal matrix: {matrix_status}
 """
 
@@ -917,8 +911,8 @@ def hook(event):
             emit(event, PROMPT_CONTEXT + phase_context(prompt) + project_status_context(Path.cwd()))
         return 0
 
-    if event in EVENT_CONTEXTS:
-        emit(event, EVENT_CONTEXTS[event] + project_status_context(Path.cwd()))
+    if event == "Stop":
+        print("{}")
         return 0
 
     return 0

@@ -2345,7 +2345,7 @@ def test_session_start_injects_fusion_workflow_and_generic_routing():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "Fusion workflow" in context
-    assert "Intake -> Matrix -> Active goal -> Development flow -> Execute -> Verify -> Checkpoint" in context
+    assert "Intake -> Matrix -> Repo active goal -> Development flow -> Execute -> Verify -> Checkpoint" in context
     assert "Work routing" in context
     assert "Product/UI" in context
     assert "Data/API" in context
@@ -2390,11 +2390,69 @@ def test_session_start_injects_lifecycle_cli_commands():
 
 def test_hook_context_explains_visible_codex_goal_boundary():
     result = run_guard(["hook", "SessionStart"], "{}")
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
 
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "create_goal" in context
     assert "visible Codex goal" in context
+    for phrase in (
+        "visible Codex goal is the whole user objective",
+        "Read it with `get_goal`",
+        "call `create_goal` once when no visible goal exists",
+        "`update_goal(status=complete)` only after all repo work and final verification",
+        "Repo active goal is the current `.goal-matrix` `G<n>` slice",
+        "`goal_guard.py status`",
+        "`goal_guard.py start`",
+        "`goal_guard.py checkpoint`",
+        "names need not match",
+        "A repo checkpoint does not complete the visible Codex goal",
+    ):
+        assert phrase in skill
+
+
+def test_model_context_and_skill_use_repo_goal_terminology_without_changing_visible_goal():
+    session = hook_context(json.loads(run_guard(["hook", "SessionStart"], "{}").stdout))
+    execute = hook_context(
+        json.loads(run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "implement active goal"})).stdout)
+    )
+    checkpoint = hook_context(
+        json.loads(run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "checkpoint active goal"})).stdout)
+    )
+    skill = read_text("adapters/codex/skills/goal-matrix-iterative-delivery/SKILL.md")
+
+    for phrase in (
+        "project initialization status -> Repo active goal -> failing check",
+        "checkpoint commit -> Repo next loop",
+        "expose one Repo active goal",
+        "Intake -> Matrix -> Repo active goal",
+        "every Repo active goal names paths",
+        "goal matrix or Repo active-goal block",
+        "Repo active goal must include",
+    ):
+        assert phrase in session
+    for phrase in (
+        "Minimum Repo active-goal block:",
+        "Repo active goal: G<n> - <name>",
+        "one Repo active goal only",
+    ):
+        assert phrase in execute
+    assert "keep the Repo next loop explicit" in checkpoint
+
+    for phrase in (
+        "Active goal contract (the Repo active goal contract in Codex)",
+        "## Repo Active Loop",
+        "Repo active goal: G<n> - <name>",
+        "project initialization status -> Repo active goal -> failing check",
+        "checkpoint commit -> Repo next loop",
+        "Completion needs `Repo next loop:`",
+        "`Next loop` in the portable protocol",
+        "still-open Repo active goal's next action",
+    ):
+        assert phrase in skill
+    for text in (session, skill):
+        assert "visible Codex goal" in text
+    assert "The visible Codex goal is the whole user objective" in skill
 
 
 def test_session_start_requires_matrix_first_response_contract():
@@ -2403,7 +2461,7 @@ def test_session_start_requires_matrix_first_response_contract():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "First substantive response" in context
-    assert "goal matrix or active-goal block" in context
+    assert "goal matrix or Repo active-goal block" in context
     assert "freeform discussion" in context
 
 
@@ -2414,7 +2472,7 @@ def test_plugin_skill_and_default_prompt_require_matrix_first_response():
     default_prompt = " ".join(manifest["interface"]["defaultPrompt"])
 
     assert "first substantive response" in skill_text.lower()
-    assert "goal matrix or active-goal block" in skill_text
+    assert "goal matrix or Repo active-goal block" in skill_text
     assert "first substantive response" in agent_text.lower()
     assert "first substantive response" in default_prompt.lower()
 
@@ -2427,7 +2485,7 @@ def test_user_prompt_submit_injects_goal_self_correction_for_goal_work():
     payload = json.loads(result.stdout)
     context = hook_context(payload)
     assert "Goal self-correction" in context
-    assert "Active goal" in context
+    assert "Repo active goal" in context
     assert "Development flow" in context
     assert "truth source" in context
 
@@ -2511,38 +2569,23 @@ def test_user_prompt_submit_classifies_execute_request_as_execute_phase():
     assert result.returncode == 0, result.stderr
     context = hook_context(json.loads(result.stdout))
     assert "Loop phase: execute" in context
-    assert "one active goal only" in context
+    assert "one Repo active goal only" in context
 
 
-def test_lifecycle_hooks_inject_single_step_boundaries():
-    for event, phrase in (
-        ("PreToolUse", "Before tool use"),
-        ("PostToolUse", "After tool use"),
-        ("Stop", "Before completion"),
-    ):
-        result = run_guard(["hook", event], "{}")
-        assert result.returncode == 0, result.stderr
-        context = hook_context(json.loads(result.stdout))
-        assert phrase in context
-        assert "one loop step" in context
+def test_non_prompt_hook_cli_never_emits_model_context():
+    results = {event: run_guard(["hook", event], "{}") for event in ("PreToolUse", "PostToolUse", "Stop")}
+
+    assert results["PreToolUse"].returncode == 0, results["PreToolUse"].stderr
+    assert results["PreToolUse"].stdout == ""
+    assert results["PostToolUse"].returncode == 0, results["PostToolUse"].stderr
+    assert results["PostToolUse"].stdout == ""
+    assert results["Stop"].returncode == 0, results["Stop"].stderr
+    assert results["Stop"].stdout == "{}\n"
+    assert json.loads(results["Stop"].stdout) == {}
+    assert all("additionalContext" not in result.stdout for result in results.values())
 
 
-def test_lifecycle_hooks_include_fast_lane_boundary():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
-        write_file(root / ".goal-matrix" / "goals" / "active-goal.md", "Active goal: none\n")
-        results = [run_guard(["hook", event], "{}", cwd=tmp) for event in ("PreToolUse", "PostToolUse", "Stop")]
-
-    for result in results:
-        assert result.returncode == 0, result.stderr
-        context = hook_context(json.loads(result.stdout))
-        assert "Fast Lane" in context
-        assert "trivial" in context
-        assert "no active goal" in context
-
-
-def test_lifecycle_hooks_include_resume_status_context():
+def test_session_and_triggered_prompt_hooks_include_repo_status_context():
     with tempfile.TemporaryDirectory() as tmp:
         assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
         active_goal = next(
@@ -2550,28 +2593,19 @@ def test_lifecycle_hooks_include_resume_status_context():
             for line in (Path(tmp) / ".goal-matrix" / "goals" / "active-goal.md").read_text().splitlines()
             if line.startswith("Active goal:")
         )
-        results = [run_guard(["hook", event], "{}", cwd=tmp) for event in ("PreToolUse", "PostToolUse", "Stop")]
+        results = (
+            run_guard(["hook", "SessionStart"], "{}", cwd=tmp),
+            run_guard(["hook", "UserPromptSubmit"], json.dumps({"prompt": "continue goal matrix"}), cwd=tmp),
+        )
 
     for result in results:
         assert result.returncode == 0, result.stderr
         context = hook_context(json.loads(result.stdout))
         assert "Project initialization status" in context
-        assert f"Active goal: {active_goal}" in context
-        assert "Next loop:" in context
+        assert f"Repo active goal: {active_goal}" in context
+        assert "Repo next loop:" in context
         assert "Goal matrix:" in context
         assert "child goals" in context
-
-
-def test_stop_hook_demands_next_loop_handoff():
-    result = run_guard(["hook", "Stop"], "{}")
-
-    assert result.returncode == 0, result.stderr
-    context = hook_context(json.loads(result.stdout))
-    assert "Next loop:" in context
-    assert "select next pending goal" in context
-    assert "continue with it before final completion" in context
-    assert "mark blocked" not in context
-    assert "keep the active goal open" in context
 
 
 def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
@@ -2618,7 +2652,8 @@ def test_codex_hook_payload_fixtures_drive_lifecycle_and_gate_paths():
     assert user_prompt.returncode == 0, user_prompt.stderr
     assert "Goal self-correction" in hook_context(json.loads(user_prompt.stdout))
     assert stop.returncode == 0, stop.stderr
-    assert "Before completion" in hook_context(json.loads(stop.stdout))
+    assert json.loads(stop.stdout) == {}
+    assert "additionalContext" not in stop.stdout
     assert immutable.returncode == 1
     assert "immutable path" in immutable.stderr
     assert protected.returncode == 1
@@ -2687,10 +2722,22 @@ def test_user_prompt_submit_triggers_for_self_evolution_runs():
     assert "never synthesize work" in context
 
 
-def test_codex_hook_config_wires_loop_events():
+def test_codex_hook_config_keeps_pre_gates_and_removes_post_tool_hook():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
-    for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-        assert event in hooks
+    pre_tool = hooks["PreToolUse"][0]["hooks"][0]
+    pre_tool_command = pre_tool["command"]
+    pre_tool_command_windows = pre_tool["commandWindows"]
+
+    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"}
+    assert " policy-gate --root . --hook" in pre_tool_command
+    assert " publish-gate --root . --hook" in pre_tool_command
+    assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
+    assert pre_tool_command_windows.index(" policy-gate --root . --hook") < pre_tool_command_windows.index(" publish-gate --root . --hook")
+    assert " hook PreToolUse" not in pre_tool_command
+    assert " hook PreToolUse" not in pre_tool_command_windows
+    assert pre_tool_command.count('if [ "$rc" -ne 0 ]; then exit 2; fi') == 2
+    assert pre_tool_command_windows.count("Remove-Item $tmp; exit 2") == 2
+    assert pre_tool["statusMessage"] == "Checking repo active goal boundary..."
 
 
 def test_pre_tool_hook_translates_policy_denial_to_exit_2():
@@ -2777,7 +2824,9 @@ def test_codex_hook_config_invokes_lifecycle_commands():
     assert " policy-gate --root . --hook" in pre_tool_command
     assert " publish-gate --root . --hook" in pre_tool_command
     assert pre_tool_command.index(" policy-gate --root . --hook") < pre_tool_command.index(" publish-gate --root . --hook")
-    assert " hook PreToolUse" in pre_tool_command
+    assert "PostToolUse" not in hooks
+    assert " hook PreToolUse" not in pre_tool_command
+    assert " hook PreToolUse" not in pre_tool_command_windows
     assert pre_tool_command.count('if [ "$rc" -ne 0 ]; then exit 2; fi') == 2
     assert 'exit "$rc"' not in pre_tool_command
     assert pre_tool_command_windows.count("Remove-Item $tmp; exit 2") == 2
@@ -2963,6 +3012,7 @@ def test_stop_hook_preserves_completion_gate_failure():
 
         assert result.returncode == 2, (result.returncode, result.stderr)
         assert "completion gate denied marker" in result.stderr
+        assert result.stdout == ""
         assert not marker.exists()
 
 
@@ -3006,7 +3056,7 @@ Development flow: inspect -> failing check -> implement -> verify -> checkpoint
         assert "checkpoint" in result.stderr.lower()
 
 
-def test_stop_hook_allows_no_active_goal():
+def test_stop_hook_success_returns_empty_json_object():
     hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
     stop_command = hooks["Stop"][0]["hooks"][0]["command"]
 
@@ -3028,6 +3078,51 @@ def test_stop_hook_allows_no_active_goal():
         )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout == "{}\n"
+    assert json.loads(result.stdout) == {}
+    assert "additionalContext" not in result.stdout
+
+
+def test_twenty_tool_calls_emit_zero_additional_context():
+    hooks = json.loads(read_text("adapters/codex/hooks/codex-lifecycle-hooks.json"))["hooks"]
+    pre_tool_command = hooks["PreToolUse"][0]["hooks"][0]["command"]
+    stop_command = hooks["Stop"][0]["hooks"][0]["command"]
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status --short"}})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert run_guard(["init", "--root", tmp, "--type", "iteration"]).returncode == 0
+        assert run_structured_start(tmp, "Finish aggregate loop").returncode == 0
+        verify = [sys.executable, "-c", "raise SystemExit(0)"]
+        assert run_guard(["checkpoint", "--root", tmp, "--", *verify]).returncode == 0
+        env = {**os.environ, "PLUGIN_ROOT": str(ROOT)}
+        pre_results = [
+            subprocess.run(
+                ["/bin/sh", "-c", pre_tool_command],
+                input=payload,
+                text=True,
+                capture_output=True,
+                cwd=tmp,
+                env=env,
+            )
+            for _ in range(20)
+        ]
+        stop = subprocess.run(
+            ["/bin/sh", "-c", stop_command],
+            input="{}",
+            text=True,
+            capture_output=True,
+            cwd=tmp,
+            env=env,
+        )
+
+    assert "PostToolUse" not in hooks
+    assert all(result.returncode == 0 for result in pre_results)
+    assert sum(len(result.stdout.encode()) for result in pre_results) == 0
+    assert stop.returncode == 0, stop.stderr
+    assert len(stop.stdout.encode()) == 3
+    assert json.loads(stop.stdout) == {}
+    aggregate = "".join(result.stdout for result in pre_results) + stop.stdout
+    assert aggregate.count("additionalContext") == 0
 
 
 def test_stop_hook_rejects_dirty_no_active_goal_without_fast_lane_evidence():
@@ -3072,7 +3167,6 @@ def test_codex_hook_commands_use_official_plugin_root_in_foreign_cwd():
         "SessionStart": '{"source":"startup"}',
         "UserPromptSubmit": read_hook_fixture("user-prompt-goal-matrix.json"),
         "PreToolUse": "{}",
-        "PostToolUse": "{}",
         "Stop": "{}",
     }
     env = {
@@ -3105,7 +3199,12 @@ def test_codex_hook_commands_use_official_plugin_root_in_foreign_cwd():
             )
 
             assert result.returncode == 0, f"{event}: {result.stderr}"
-            assert '"hookSpecificOutput"' in result.stdout, f"{event}: real goal guard not reached"
+            if event in ("SessionStart", "UserPromptSubmit"):
+                assert '"hookSpecificOutput"' in result.stdout, f"{event}: real goal guard not reached"
+            elif event == "PreToolUse":
+                assert result.stdout == ""
+            else:
+                assert result.stdout == "{}\n"
             assert not marker.exists(), f"{event}: foreign goal guard executed"
 
 
